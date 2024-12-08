@@ -1,14 +1,14 @@
-#include "kernel.h"
+#include <kernel.h>
+#include <status.h>
+
 #include <memory/heap/kheap.h>
 #include <memory/paging/paging.h>
 #include <idt/idt.h>
+
 #include <lib/log.h>
 #include <stddef.h>
 
-struct bootinfo bootinfo;
-static size_t kernel_address_space = 0;
-
-void kernel_main()
+int kernel_main()
 {
     kprintln("Hello satan!");
 
@@ -21,9 +21,9 @@ void kernel_main()
     enable_interrupts();
 
     // Setup paging
-    kernel_address_space = paging_init();
-    paging_set(kernel_address_space, 0x1000, 0x8000, PAGING_FLAG_PRESENT | PAGING_FLAG_WRITEABLE);
-    paging_set(kernel_address_space, 0x2000, 0x8000, PAGING_FLAG_PRESENT);
+    TRY(paging_init());
+    TRY(paging_set(get_current_page_table(), 0x1000, 0x8000, PAGING_FLAG_PRESENT | PAGING_FLAG_WRITEABLE));
+    TRY(paging_set(get_current_page_table(), 0x2000, 0x8000, PAGING_FLAG_PRESENT));
 
     char *testPtr = (char*)0x1000;
 
@@ -35,4 +35,6 @@ void kernel_main()
     testPtr[5] = '\0';
 
     kprintln((char*)0x2000);
+
+    return SATAN_ALL_OK;
 }

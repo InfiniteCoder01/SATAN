@@ -1,5 +1,4 @@
-#include "memory/paging/paging.h"
-#include "paging_config.h"
+#include "paging_impl.h"
 #include <memory/heap/kheap.h>
 #include <memory/paging/paging.h>
 #include <status.h>
@@ -12,12 +11,7 @@
 #define PAGING_WRITE_THROUGH 0b00001000
 #define PAGING_CACHE_DISABLED 0b00010000
 
-void enable_paging();
-void paging_load_directory(size_t directory);
-void paging_set_table_entry(size_t directory_address, size_t table_offset, size_t value);
-
-size_t paging_current_page_table = 0;
-size_t page_info_table_address;
+static page_table_handle kernel_page_table = 0;
 
 static int convert_flags(uint8_t *flags)
 {
@@ -33,15 +27,29 @@ static int convert_flags(uint8_t *flags)
     return 0;
 }
 
-size_t paging_init()
+int paging_init()
 {
-    size_t kernel_address_space = paging_new_table();
-    paging_switch(kernel_address_space);
-    enable_paging();
-    return kernel_address_space;
+    kernel_page_table = paging_new_table();
+    paging_switch(kernel_page_table);
+    ENABLE_PAGING();
+    return SATAN_ALL_OK;
 }
 
-size_t paging_new_table()
+page_table_handle get_kernel_page_table()
+{
+    return kernel_page_table;
+}
+
+page_table_handle get_current_page_table()
+{
+    register page_table_handle dst;
+    __asm__ volatile(
+        "mov %%cr3, %[dst]"
+        : [dst] "=rm"(dst));
+    return dst;
+}
+
+page_table_handle paging_new_table()
 {
     size_t *table = kmalloc(sizeof(size_t) * PAGING_TOTAL_ENTRIES_PER_TABLE);
     int offset = 0;
@@ -59,26 +67,42 @@ size_t paging_new_table()
     return (size_t)table;
 }
 
-void paging_switch(size_t table)
+int paging_switch(page_table_handle table)
 {
-    paging_load_directory(table);
-    paging_current_page_table = table;
+    __asm__ volatile("mov %0, %%cr3" : "=rm"(table));
+    return SATAN_ALL_OK;
 }
 
-static void paging_get_indexes(size_t virtual_address, size_t *directory_index_out, size_t *table_index_out)
+// int paging_free_table(page_table_handle table);
+
+static void compute_addresses(page_table_handle page_table, size_t virtual_address, size_t *table_address, size_t *table_offset)
 {
-    *directory_index_out = ((size_t)virtual_address / (PAGING_TOTAL_ENTRIES_PER_TABLE * PAGE_SIZE));
-    *table_index_out = ((size_t)virtual_address % (PAGING_TOTAL_ENTRIES_PER_TABLE * PAGE_SIZE) / PAGE_SIZE);
+    size_t directory_index = ((size_t)virtual_address / (PAGING_TOTAL_ENTRIES_PER_TABLE * PAGE_SIZE));
+    size_t table_index = ((size_t)virtual_address % (PAGING_TOTAL_ENTRIES_PER_TABLE * PAGE_SIZE) / PAGE_SIZE);
+    *table_address = page_table + directory_index * sizeof(size_t);
+    *table_offset = table_index * sizeof(size_t);
 }
 
-int paging_set(size_t page_table, size_t virtual_address, size_t physical_address, uint8_t flags)
+int paging_set(page_table_handle page_table, size_t virtual_address, size_t physical_address, uint8_t flags)
 {
     if (!paging_is_aligned(virtual_address)) return -EINVARG;
     if (!paging_is_aligned(physical_address)) return -EINVARG;
     TRY(convert_flags(&flags));
-    size_t directory_index, table_index;
-    paging_get_indexes(virtual_address, &directory_index, &table_index);
-    paging_set_table_entry(page_table + directory_index * sizeof(size_t), table_index * sizeof(size_t), physical_address | flags);
+    size_t table_address, table_offset;
+    compute_addresses(page_table, virtual_address, &table_address, &table_offset);
+    size_t value = physical_address | flags;
+
+    DISABLE_PAGING();
+    __asm__ volatile(
+        "mov (%[table_address]), %%eax\n\t"
+        "and $0xfffff000, %%eax\n\t"
+        "mov %[value], (%%eax, %[table_offset])\n\t"
+        :
+        : [table_address] "ir"(table_address),
+          [table_offset] "ir"(table_offset),
+          [value] "ir"(value)
+        : "eax", "edx", "memory");
+    ENABLE_PAGING();
     return 0;
 }
 

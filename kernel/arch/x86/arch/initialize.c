@@ -1,12 +1,12 @@
-#include "lib/elf.h"
-#include "multiboot2.h"
-#include "paging/paging_config.h"
+#include <stdint.h>
+#include <status.h>
 #include <kernel.h>
+#include <lib/elf.h>
 #include <lib/log.h>
 #include <lib/memory.h>
 #include <memory/paging/paging.h>
-#include <status.h>
-#include <stdint.h>
+#include "paging/paging_impl.h"
+#include "multiboot2.h"
 
 void terminal_initialize();
 
@@ -89,14 +89,14 @@ int initialize(uint32_t magic, struct multiboot_info *multiboot_info)
 
     if (multiboot_info_start < kernel_top || multiboot_info_start - kernel_top > address_limit - multiboot_info_end) page_info_table_address = kernel_top;
     else page_info_table_address = multiboot_info_end;
-    bootinfo.page_count = address_limit / PAGE_SIZE;
-    if (page_info_table_address + bootinfo.page_count * sizeof(struct PageInfo) > address_limit)
+    total_page_count = address_limit / PAGE_SIZE;
+    if (page_info_table_address + total_page_count * sizeof(struct PageInfo) > address_limit)
     {
         kprintln("Can't create page info table, not enough RAM!");
         return -ENOMEM;
     }
     struct PageInfo *page_info_table = (struct PageInfo *)page_info_table_address;
-    for (size_t i = 0; i < bootinfo.page_count; i++)
+    for (size_t i = 0; i < total_page_count; i++)
     {
         page_info_table[i].uses = 1;
     }
@@ -125,7 +125,7 @@ int initialize(uint32_t magic, struct multiboot_info *multiboot_info)
             size_t upper_page = upper_addr / PAGE_SIZE + (upper_addr % PAGE_SIZE != 0);
             for (size_t i = lower_page; i < upper_page; i++)
             {
-                if (i >= bootinfo.page_count)
+                if (i >= total_page_count)
                 {
                     kprintln("Kernel location is outside of the memory!");
                     return -EINVARG;
@@ -135,12 +135,12 @@ int initialize(uint32_t magic, struct multiboot_info *multiboot_info)
         }
     }
     {
-        size_t upper_addr = page_info_table_address + bootinfo.page_count * sizeof(struct PageInfo);
+        size_t upper_addr = page_info_table_address + total_page_count * sizeof(struct PageInfo);
         size_t lower_page = page_info_table_address / PAGE_SIZE;
         size_t upper_page = upper_addr / PAGE_SIZE + (upper_addr % PAGE_SIZE != 0);
         for (size_t i = lower_page; i < upper_page; i++)
         {
-            if (i >= bootinfo.page_count)
+            if (i >= total_page_count)
             {
                 kprintln("Page info table is outside of the memory!");
                 return -ENOMEM;

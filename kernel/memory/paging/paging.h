@@ -4,10 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-struct PageInfo {
-    size_t uses;
-};
+#include "arch/paging/paging.h"
 
 enum
 {
@@ -19,15 +16,15 @@ enum
     PAGING_FLAGS_ALL = 0b00011111,
 };
 
-size_t paging_init();
+int paging_init();
+page_table_handle get_kernel_page_table();
 
-extern size_t page_info_table_address;
+page_table_handle get_current_page_table();
+page_table_handle paging_new_table();
+int paging_switch(page_table_handle table);
+int paging_free_table(page_table_handle table);
 
-size_t paging_new_table();
-void paging_switch(size_t table);
-extern size_t paging_current_page_table;
-
-int paging_set(size_t page_table, size_t virtaul_address, size_t physical_address, uint8_t flags);
+int paging_set(page_table_handle page_table, size_t virtaul_address, size_t physical_address, uint8_t flags);
 bool paging_is_aligned(size_t addr);
 
 #endif
