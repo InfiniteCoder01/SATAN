@@ -6,25 +6,24 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem
       (system: let
+        target = "i686-elf";
         pkgs = (import nixpkgs { inherit system; });
         pkgs-crosssystem = (import nixpkgs {
           inherit system;
           crossSystem = {
-            config = "i686-elf";
+            config = target;
           };
         });
       in
         {
           devShell = pkgs.mkShell {
             buildInputs = with pkgs; [
-              gnumake
-              nasm
               qemu
-              clang
               libisoburn mtools
               pkgs-crosssystem.buildPackages.grub2
               pkgs-crosssystem.buildPackages.gcc
             ];
+            CROSS_CC = "${pkgs-crosssystem.buildPackages.gcc.outPath}/bin/${target}-gcc";
           };
         }
       );

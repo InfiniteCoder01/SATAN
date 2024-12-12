@@ -1,14 +1,7 @@
-# Ignore any vscode related directories
-.vscode/
-
-# And clangd
+# Ignore dev directories
+.vscode
 .cache
 
-# Ignore the bin directory
-bin/
-
-# Ignore the build directory
-build/
-
-#ignore the makefiles
-Makefile
+# Ignore built binaries
+/bin
+/target
