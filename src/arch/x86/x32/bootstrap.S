@@ -52,9 +52,6 @@ gdt_descriptor:
 CODE_SEG = gdt_code - gdt_start
 DATA_SEG = gdt_data - gdt_start
 
-value:
-    .word 'b' | 0x100
-
 .section .data, "aw"
 .global kernel_page_directory
 .align 4096
@@ -137,7 +134,10 @@ after_gdt:
     mov $kernel_start - KERNEL_OFFSET, %edi
     shr $10, %edi
     add $kernel_page_table1_higher_half - KERNEL_OFFSET, %edi # Add to the page table address
-    mov $0b11, %ebx                            # Flags
+    mov $0b01, %ebx                            # Flags
+    call mmap
+    mov $kernel_end - KERNEL_OFFSET, %eax      # End address
+    mov $0b01, %ebx                            # Flags
     call mmap
 
     # Enable paging
@@ -147,7 +147,6 @@ after_gdt:
     or $0x80000000, %eax
     mov %eax, %cr0
 
-    movw value, %ax
-    mov %ax, 0xb8000
-loop:
-    jmp loop
+    # Note that multiboot2 args are on top of the stack
+    call ksetup
+    hlt
