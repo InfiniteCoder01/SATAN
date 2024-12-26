@@ -421,16 +421,17 @@ pub(super) fn setup() {
         IDTR.base = IDT.as_ptr() as usize;
         core::arch::asm!("lidt ({0})", in(reg) &IDTR as *const _ as usize, options(att_syntax));
 
-        core::arch::asm!(
-            // Remap the master PIC
-            "mov $0b00010001, %al",
-            "out %al, $0x20", // Tell master PIC
-            "mov $0x20, %al", // Interrupt 0x20 is where master ISR should start
-            "out %al, $0x21",
-            "mov $0b00000001, %al",
-            "out %al, $0x21",
-            options(att_syntax)
-        );
+        // Programming PIC
+        u8::write(0x20, 0x11); // Remap master PIC
+        u8::write(0xa0, 0x11); // Remap slave PIC
+        u8::write(0x21, 0x20); // Master PIC offset 0x20
+        u8::write(0xa1, 0x28); // Slave PIC offset 0x28
+        u8::write(0x21, 4); // Tell master PIC that there is a slave PIC at IRQ2 (0000 0100)
+        u8::write(0xa1, 2); // Tell slave PIC its cascade identity (0000 0010)
+        u8::write(0x21, 0x01); // 8086 mode
+        u8::write(0xa1, 0x01); // 8086 mode
+        u8::write(0x21, 0x00); // Master PIC mask
+        u8::write(0xa1, 0x00); // Slave PIC mask
         enable();
     }
     early_logger::early_print("IDT is setup");
