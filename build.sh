@@ -26,7 +26,10 @@ fi
 
 # Utils
 build() {
-	cargo build
+	if ! cargo build; then
+		return -1
+	fi
+
 	KERNEL="target/target/debug/satan"
 	GRUB_CFG="src/arch/$ARCH/grub"
 	if [ "$KERNEL" -nt "bin/os.iso" ] || [ "$GRUB_CFG" -nt "bin/os.iso" ]; then
@@ -42,6 +45,11 @@ build() {
 
 run() {
 	qemu-system-$QEMU_SYSTEM -cdrom bin/os.iso
+}
+
+debug() {
+	qemu-system-$QEMU_SYSTEM -cdrom bin/os.iso -s -S &
+	rust-gdb target/target/debug/satan -x gdbinit
 }
 
 clean() {
@@ -62,6 +70,7 @@ help() {
 	Commands:
 	build - build kernel and OS
 	run - build and run the OS
+	debug - build and run the OS, drop into gdb
 	print - print current parameters
 	clean - remove all build artifacts
 	help - show this message
@@ -73,6 +82,7 @@ command() {
 	case $1 in
 		build) build;;
 		run) build && run;;
+		debug) build && debug;;
 		print) print;;
 		clean)  clean;;
 		help)  help;;

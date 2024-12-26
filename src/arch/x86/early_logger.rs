@@ -4,7 +4,6 @@ const VGA_BUFFER: *mut u16 = 0xb8000 as *mut u16;
 static mut LINE: u8 = 0;
 static mut COL: u8 = 0;
 
-#[inline]
 fn write(ch: u8, color: u8) {
     match ch {
         b'\n' => unsafe {
@@ -26,10 +25,9 @@ fn write(ch: u8, color: u8) {
     }
 }
 
-#[inline]
-pub fn early_panic(msg: &[u8]) -> ! {
-    for ch in msg.into_iter().copied() {
-        write(ch, 0x04);
+pub fn early_panic(msg: &str) -> ! {
+    for ch in msg.chars() {
+        write(ch as _, 0x04);
     }
     loop {}
 }

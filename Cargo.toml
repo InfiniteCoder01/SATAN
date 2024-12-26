@@ -16,8 +16,12 @@ panic ="abort"
 panic ="abort"
 
 [dependencies]
+spin = "0.9.8"
+talc = "4.4.2"
+
+[target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dependencies]
 multiboot2 = { version = "0.23.1", default-features = false }
-x86 = "0.52.0"
+portable = "0.2.1"
 
 [build-dependencies]
 cc = "<=1.0.73"

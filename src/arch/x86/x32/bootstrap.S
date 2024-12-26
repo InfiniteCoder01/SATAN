@@ -43,6 +43,14 @@ gdt_data:            # DS, SS, ES, FS, GS
     .byte 0b11001111 # High 4 bit flags and the low 4 bit flags
     .byte 0          # Base 24-31 bits
 
+gdt_tss:             # TS
+    .word 0xffff     # Segment limit first 0-15 bits
+    .word 0          # Base first 0-15 bits
+    .byte 0          # Base 16-23 bits
+    .byte 0x89       # Access byte
+    .byte 0          # High 4 bit flags and the low 4 bit flags
+    .byte 0          # Base 24-31 bits
+
 gdt_end:
 
 gdt_descriptor:
@@ -51,10 +59,11 @@ gdt_descriptor:
 
 CODE_SEG = gdt_code - gdt_start
 DATA_SEG = gdt_data - gdt_start
+TSS_SEG = gdt_tss - gdt_start
 
 .section .data, "aw"
-.global kernel_page_directory
 .align 4096
+.global kernel_page_directory
 kernel_page_directory:
     .fill 1024, 4, 0
 kernel_page_table_bootstrap:
@@ -62,10 +71,17 @@ kernel_page_table_bootstrap:
 kernel_page_table1_higher_half:
     .fill 1024, 4, 0
 
+.global kernel_tmp_page_entry_address
+kernel_tmp_page_entry_address:
+    .long 0
+
 .section .stack, "aw"
 bootstrap_stack:
     .skip 16384
 bootstrap_stack_top:
+tss_stack:
+    .skip 16384
+tss_stack_top:
 
 .section .bootstrap, "ax"
 .code32
@@ -89,11 +105,25 @@ mmap:
 .extern kernel_start
 .extern data_start
 .extern kernel_end
+
 .extern ksetup
 .global _start
 .type _start, @function
 _start:
     cli
+
+    # Setup TSS
+    mov tss_stack_top - tss_stack - 1, %cx
+    mov %cx, gdt_tss
+
+    mov tss_stack, %ecx
+    mov %cx, gdt_tss + 2
+    shr $16, %ecx
+    mov %cl, gdt_tss + 4
+    shr $8, %ecx
+    mov %cl, gdt_tss + 7
+
+    # Setup GDT
     lgdt gdt_descriptor - KERNEL_OFFSET
     mov $DATA_SEG, %cx
     mov %cx, %ds
@@ -101,11 +131,12 @@ _start:
     mov %cx, %fs
     mov %cx, %gs
     mov %cx, %ss
+    mov $TSS_SEG, %cx
+    ltr %cx
     jmp $CODE_SEG, $after_gdt
 
 after_gdt:
     mov $bootstrap_stack_top - KERNEL_OFFSET, %esp
-    mov %esp, %ebp
     push %ebx
     push %eax
 
@@ -128,6 +159,11 @@ after_gdt:
     mov $0b01, %ebx      # Flags
     call mmap
 
+    # Check if kernel fits
+    mov $KERNEL_OFFSET + 0x400000, %eax
+    cmp $kernel_end, %eax
+    jb kernelTooBig
+    
     mov $kernel_start - KERNEL_OFFSET, %esi    # Start address
     mov $data_start - KERNEL_OFFSET, %eax      # End address
     # Compute offset into page table
@@ -137,8 +173,13 @@ after_gdt:
     mov $0b01, %ebx                            # Flags
     call mmap
     mov $kernel_end - KERNEL_OFFSET, %eax      # End address
-    mov $0b01, %ebx                            # Flags
+    mov $0b11, %ebx                            # Flags
     call mmap
+
+    # Setup tmp page
+    sub $4, %edi
+    add $KERNEL_OFFSET, %edi
+    mov %edi, kernel_tmp_page_entry_address - KERNEL_OFFSET
 
     # Enable paging
     mov $kernel_page_directory - KERNEL_OFFSET, %eax
@@ -147,6 +188,31 @@ after_gdt:
     or $0x80000000, %eax
     mov %eax, %cr0
 
+    # Fix stack pointer
+    add $KERNEL_OFFSET, %esp
+
     # Note that multiboot2 args are on top of the stack
     call ksetup
+    cli
+hlt.loop:
     hlt
+    jmp hlt.loop
+
+kernelTooBig:
+    movw $'K' | 0x0400, 0xb8000
+    movw $'e' | 0x0400, 0xb8002
+    movw $'r' | 0x0400, 0xb8004
+    movw $'n' | 0x0400, 0xb8006
+    movw $'e' | 0x0400, 0xb8008
+    movw $'l' | 0x0400, 0xb800a
+    movw $' ' | 0x0400, 0xb800c
+    movw $'t' | 0x0400, 0xb800e
+    movw $'o' | 0x0400, 0xb8010
+    movw $'o' | 0x0400, 0xb8012
+    movw $' ' | 0x0400, 0xb8014
+    movw $'b' | 0x0400, 0xb8016
+    movw $'i' | 0x0400, 0xb8018
+    movw $'g' | 0x0400, 0xb801a
+    movw $'!' | 0x0400, 0xb801c
+kernelTooBig.loop:
+    jmp kernelTooBig.loop

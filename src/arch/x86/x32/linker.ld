@@ -34,6 +34,8 @@ SECTIONS {
 		*(.stack)
 	}
 
-	/* Add a symbol that indicates the end address of the kernel. */
-	kernel_end = .;
+	kernel_tmp_page_address = .;
+
+	/* Add a symbol that indicates the end address of the kernel. Add 4KiB for a TMP_PAGE */
+	kernel_end = . + 4096;
 }
