@@ -1,4 +1,3 @@
-use super::*;
 use portable::PortRw as _;
 
 #[inline]
@@ -35,8 +34,11 @@ fn interrupt_handler(interrupt: u16, error_code: usize) {
     if interrupt == 0x21 {
         // Keyboard
         let scancode = u8::read(0x60);
-        early_logger::early_print(&format!("Keyboard: {}\n", scancode));
+        crate::println!("Keyboard: {}", scancode);
+        return;
     }
+
+    loop {}
 }
 
 // -------------------------------- IDT
@@ -82,12 +84,13 @@ impl IDTDescriptor {
 }
 
 #[repr(C, packed)]
-pub struct IDTR {
+struct IDTR {
     limit: u16,
     base: usize,
 }
 
-static mut IDT: [IDTDescriptor; 256] = [IDTDescriptor::NULL; 256];
+type IDT = [IDTDescriptor; 256];
+static mut IDT: IDT = [IDTDescriptor::NULL; 256];
 static mut IDTR: IDTR = IDTR { limit: 0, base: 0 };
 
 // -------------------------------- All the interrupts
@@ -417,9 +420,9 @@ pub(super) fn setup() {
         IDT[0xfe] = IDTDescriptor::new(int_0xfe as usize, 0x08, 0x8E);
         IDT[0xff] = IDTDescriptor::new(int_0xff as usize, 0x08, 0x8E);
 
-        IDTR.limit = core::mem::size_of_val(&IDT) as u16 - 1;
-        IDTR.base = IDT.as_ptr() as usize;
-        core::arch::asm!("lidt ({0})", in(reg) &IDTR as *const _ as usize, options(att_syntax));
+        IDTR.limit = core::mem::size_of::<IDT>() as u16 - 1;
+        IDTR.base = &raw const IDT as usize;
+        core::arch::asm!("lidt ({0})", in(reg) &raw const IDTR as usize, options(att_syntax));
 
         // Programming PIC
         u8::write(0x20, 0x11); // Remap master PIC
@@ -434,5 +437,5 @@ pub(super) fn setup() {
         u8::write(0xa1, 0x00); // Slave PIC mask
         enable();
     }
-    early_logger::early_print("IDT is setup");
+    crate::println!("IDT is setup");
 }

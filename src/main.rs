@@ -5,9 +5,6 @@
     feature(abi_x86_interrupt)
 )]
 
-#[cfg(debug_assertions)]
-#[macro_use]
-extern crate alloc;
-
 pub mod arch;
-pub mod panic;
+pub mod log;
+pub mod memory;

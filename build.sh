@@ -44,11 +44,11 @@ build() {
 }
 
 run() {
-	qemu-system-$QEMU_SYSTEM -cdrom bin/os.iso
+	qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso
 }
 
 debug() {
-	qemu-system-$QEMU_SYSTEM -cdrom bin/os.iso -s -S &
+	qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso -s -S &
 	rust-gdb target/target/debug/satan -x gdbinit
 }
 

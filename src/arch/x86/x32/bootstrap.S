@@ -63,8 +63,8 @@ TSS_SEG = gdt_tss - gdt_start
 
 .section .data, "aw"
 .align 4096
-.global kernel_page_directory
-kernel_page_directory:
+.global kernel_top_level_page_table
+kernel_top_level_page_table:
     .fill 1024, 4, 0
 kernel_page_table_bootstrap:
     .fill 1024, 4, 0
@@ -143,12 +143,12 @@ after_gdt:
     # Map first page table (4MB)
     mov $kernel_page_table_bootstrap - KERNEL_OFFSET, %eax
     or $0b00000011, %eax
-    mov %eax, kernel_page_directory - KERNEL_OFFSET
+    mov %eax, kernel_top_level_page_table - KERNEL_OFFSET
 
     # Map first page table (4MB) in the higher half of the address space
     mov $kernel_page_table1_higher_half - KERNEL_OFFSET, %eax
     or $0b00000011, %eax
-    mov %eax, kernel_page_directory - KERNEL_OFFSET + KERNEL_OFFSET / 0x400000 * 4
+    mov %eax, kernel_top_level_page_table - KERNEL_OFFSET + KERNEL_OFFSET / 0x400000 * 4
 
     mov $0, %esi         # Start address
     mov $0x100000, %eax  # End address
@@ -182,7 +182,7 @@ after_gdt:
     mov %edi, kernel_tmp_page_entry_address - KERNEL_OFFSET
 
     # Enable paging
-    mov $kernel_page_directory - KERNEL_OFFSET, %eax
+    mov $kernel_top_level_page_table - KERNEL_OFFSET, %eax
     mov %eax, %cr3
     mov %cr0, %eax
     or $0x80000000, %eax
