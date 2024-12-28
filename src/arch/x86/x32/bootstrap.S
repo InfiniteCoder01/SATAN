@@ -18,7 +18,7 @@ header_end:
 
 KERNEL_OFFSET = 0xC0000000
 
-.section .rodata, "a"
+.section .data, "aw"
 # GDT
 gdt_start:
 gdt_null:
@@ -113,15 +113,15 @@ _start:
     cli
 
     # Setup TSS
-    mov tss_stack_top - tss_stack - 1, %cx
-    mov %cx, gdt_tss
+    mov $tss_stack_top - tss_stack - 1, %cx
+    mov %cx, gdt_tss - KERNEL_OFFSET
 
-    mov tss_stack, %ecx
-    mov %cx, gdt_tss + 2
+    mov $tss_stack, %ecx
+    mov %cx, gdt_tss - KERNEL_OFFSET + 2
     shr $16, %ecx
-    mov %cl, gdt_tss + 4
+    mov %cl, gdt_tss - KERNEL_OFFSET + 4
     shr $8, %ecx
-    mov %cl, gdt_tss + 7
+    mov %cl, gdt_tss - KERNEL_OFFSET + 7
 
     # Setup GDT
     lgdt gdt_descriptor - KERNEL_OFFSET

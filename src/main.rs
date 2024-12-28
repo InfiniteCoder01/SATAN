@@ -5,6 +5,11 @@
     feature(abi_x86_interrupt)
 )]
 
+/// Arch-specific things
 pub mod arch;
+
+/// Basic logging facilities, calling arch-specific early print and panic functions
 pub mod log;
+
+/// Memory interfaces
 pub mod memory;

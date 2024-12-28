@@ -9,10 +9,15 @@ extern "C" {
     static TMP_PAGE_ENTRY: *mut PTEntry;
 }
 
-pub(super) fn map(addr: PhysAddr, flags: PTEFlags) -> VirtAddr {
-    assert!(addr.is_aligned_4k());
+/// Map a physical address to the TMP page. Returns virtual address of the TMP page
+pub(super) fn map(addr: PhysAddr, flags: MappingFlags) -> VirtAddr {
+    assert!(
+        addr.is_aligned_4k(),
+        "mapping an unaligned address {:?} to tmp page",
+        addr
+    );
     unsafe {
-        *TMP_PAGE_ENTRY = PTEntry::new(addr, flags);
+        *TMP_PAGE_ENTRY = PTEntry::new_page(addr, PageSize::Size4K, flags);
     }
     address()
 }

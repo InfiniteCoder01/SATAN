@@ -1,5 +1,6 @@
 use portable::PortRw as _;
 
+/// Enable interrupts
 #[inline]
 pub fn enable() {
     unsafe {
@@ -7,6 +8,7 @@ pub fn enable() {
     }
 }
 
+/// Disable interrupts
 #[inline]
 pub fn disable() {
     unsafe {
@@ -15,6 +17,7 @@ pub fn disable() {
 }
 
 // -------------------------------- ISR
+/// Interrupt stack frame
 #[repr(C)]
 struct InterruptStackFrame {
     instruction_pointer: usize,
@@ -26,7 +29,15 @@ struct InterruptStackFrame {
     stack_segment: u16,
 }
 
-fn interrupt_handler(interrupt: u16, error_code: usize) {
+/// Central interrupt handler, all interrupts come here specifying an interrupt number
+fn interrupt_handler(interrupt: u8, error_code: usize) {
+    if interrupt == 0x0E {
+        // Page fault
+        crate::println!("Page fault!\nError code:\n{:#032b}", error_code);
+        crate::println!("                ^        ^^IRUWP");
+        crate::println!("               SGX      SSPK    ");
+        return;
+    }
     if interrupt == 0x20 {
         // Timer
         return;
@@ -42,6 +53,7 @@ fn interrupt_handler(interrupt: u16, error_code: usize) {
 }
 
 // -------------------------------- IDT
+/// IDT descriptor, one per interrupt
 #[repr(C, packed)]
 struct IDTDescriptor {
     offset_1: u16,       // offset bits 0..15
@@ -56,6 +68,7 @@ struct IDTDescriptor {
 }
 
 impl IDTDescriptor {
+    /// Null descriptor
     const NULL: Self = Self {
         offset_1: 0,
         selector: 0,
@@ -83,6 +96,7 @@ impl IDTDescriptor {
     }
 }
 
+/// IDTR, holds address and size of the IDT
 #[repr(C, packed)]
 struct IDTR {
     limit: u16,
@@ -141,6 +155,10 @@ macro_rules! int {
     };
 }
 
+/// Define all interrupts
+/// ec stands for error code, means that this interrupt pushes an error-code onto the stack
+/// m stands for master, which tells interrupt handler to send EOI to master PIC
+/// s stands for slave, which tells interrupt handler to send EOI to both master and slave PICs
 int! {
     int_0x00(0x00), int_0x01(0x01), int_0x02(0x02), int_0x03(0x03), int_0x04(0x04), int_0x05(0x05), int_0x06(0x06), int_0x07(0x07), int_0x08(0x08, ec), int_0x09(0x09), int_0x0a(0x0a, ec), int_0x0b(0x0b, ec), int_0x0c(0x0c, ec), int_0x0d(0x0d, ec), int_0x0e(0x0e, ec), int_0x0f(0x0f),
     int_0x10(0x10), int_0x11(0x11, ec), int_0x12(0x12), int_0x13(0x13), int_0x14(0x14), int_0x15(0x15, ec), int_0x16(0x16), int_0x17(0x17), int_0x18(0x18), int_0x19(0x19), int_0x1a(0x1a), int_0x1b(0x1b), int_0x1c(0x1c), int_0x1d(0x1d, ec), int_0x1e(0x1e, ec), int_0x1f(0x1f),
@@ -160,6 +178,7 @@ int! {
     int_0xf0(0xf0), int_0xf1(0xf1), int_0xf2(0xf2), int_0xf3(0xf3), int_0xf4(0xf4), int_0xf5(0xf5), int_0xf6(0xf6), int_0xf7(0xf7), int_0xf8(0xf8), int_0xf9(0xf9), int_0xfa(0xfa), int_0xfb(0xfb), int_0xfc(0xfc), int_0xfd(0xfd), int_0xfe(0xfe), int_0xff(0xff),
 }
 
+/// Setup IDT and program the PIC
 #[link_section = ".bootstrap"]
 pub(super) fn setup() {
     unsafe {
