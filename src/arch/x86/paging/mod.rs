@@ -8,6 +8,13 @@ mod tmp_page;
 mod page_table_entry;
 use page_table_entry::{PTEFlags, PTEntry};
 
+/// Address space implementation
+mod address_space;
+use address_space::AddressSpace;
+
+/// Page allocator manages free pages
+mod page_alloc;
+
 /// Page sizes possible to map
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(usize)]
@@ -42,81 +49,22 @@ fn kernel_virt2phys(vaddr: VirtAddr) -> PhysAddr {
 }
 
 #[cfg(target_arch = "x86")]
-/// Number of page table entries in 32-bit x86 page table
-pub(super) const PAGE_TABLE_ENTRIES: usize = 1024;
+/// Number of bits each table takes off the vitual address
+const PAGE_LEVEL_BITS: usize = 10;
 #[cfg(target_arch = "x86_64")]
-/// Number of page table entries in x86_64 page table
-pub(super) const PAGE_TABLE_ENTRIES: usize = 512;
+/// Number of bits each table takes off the vitual address
+const PAGE_LEVEL_BITS: usize = 9;
+
+/// Number of page table entries in a page table
+const PAGE_TABLE_ENTRIES: usize = 1 << PAGE_LEVEL_BITS;
 
 /// Page table type
-pub(super) type PageTable = [PTEntry; PAGE_TABLE_ENTRIES];
+type PageTable = [PTEntry; PAGE_TABLE_ENTRIES];
 
 // -------------------------------- Memory mapping
-/// Address space struct
-pub struct AddressSpace(PhysAddr);
 
-impl AddressSpace {
-    /// Map the page table layer and get the page table entry associated with this address
-    fn get_entry(
-        layer: <Self as AddressSpaceTrait>::Layer,
-        vaddr: VirtAddr,
-    ) -> &'static mut PTEntry {
-        let page_table = tmp_page::map(layer.0, MappingFlags::PRESENT | MappingFlags::WRITE);
-        let page_table = page_table.as_mut_ptr_of::<PageTable>();
-
-        let mask = PAGE_TABLE_ENTRIES - 1;
-
-        let index = vaddr.as_usize() >> layer.1 & mask;
-        unsafe { &mut (*page_table)[index] }
-    }
-}
-
-impl AddressSpaceTrait for AddressSpace {
-    type Layer = (PhysAddr, usize);
-
-    fn page_size(layer: &Self::Layer) -> usize {
-        1 << layer.1
-    }
-
-    fn set_entry(
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        paddr: PhysAddr,
-        page_size: crate::arch::paging::PageSize,
-        flags: MappingFlags,
-    ) {
-        assert!(vaddr.is_aligned(page_size as usize));
-        assert!(paddr.is_aligned(page_size as usize));
-        let entry = Self::get_entry(layer, vaddr);
-        // TODO: Freeing entry
-        *entry = PTEntry::new_page(paddr, page_size, flags);
-    }
-
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr) -> Self::Layer {
-        let entry = Self::get_entry(layer, vaddr);
-        if !entry.flags().contains(PTEFlags::P)
-            || entry.flags().contains(PTEFlags::P | PTEFlags::PS)
-        {
-            // TODO: Freing the huge page and creating a new one
-        }
-        #[cfg(target_arch = "x86")]
-        let bits = 10;
-        #[cfg(target_arch = "x86_64")]
-        let bits = 9;
-        crate::println!("Selecting next layer with address of {:?}", entry.address());
-        (entry.address(), layer.1 - bits)
-    }
-
-    fn top_layer(&self) -> Self::Layer {
-        #[cfg(target_arch = "x86")]
-        return (self.0, 22);
-        #[cfg(target_arch = "x86_64")]
-        return (self.0, 39);
-    }
-}
-
-/// Setup page info table
-pub(super) fn setup_info_table() {
+/// Setup paging
+pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
     // Enable PSE
     unsafe {
         core::arch::asm!(
@@ -128,24 +76,7 @@ pub(super) fn setup_info_table() {
         );
     }
 
-    let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
-    let kernel_address_space = AddressSpace(kernel_virt2phys(kernel_address_space));
-
-    let test = 0x800000 as *mut u32;
-    // let test = 0xC012d000 as *mut u32;
-    kernel_address_space.map_page(
-        kernel_address_space.top_layer(),
-        VirtAddr::from_mut_ptr_of(test),
-        PhysAddr::from_usize(0x800000),
-        PageSize::Size4M,
-        MappingFlags::PRESENT | MappingFlags::READ | MappingFlags::WRITE,
-    );
-    crate::println!("Hey?");
-    unsafe {
-        *test = 42;
-    };
-    crate::println!("Hey?");
-    crate::println!("Testing page mapping: {}", unsafe { *test });
+    page_alloc::setup_page_info_table(boot_info);
 }
 
 macro_rules! linker_symbol {

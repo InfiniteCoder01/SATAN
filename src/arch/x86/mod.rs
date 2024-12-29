@@ -36,8 +36,7 @@ pub extern "cdecl" fn ksetup(mb_magic: u32, mbi_ptr: u32) -> ! {
 
     crate::println!("Hello, SATAN!");
     interrupts::setup();
-    paging::setup_info_table();
-    // paging::setup_page_info_table(&boot_info);
+    paging::setup_paging(&boot_info);
 
     loop {}
 }

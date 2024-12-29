@@ -98,14 +98,14 @@ impl IDTDescriptor {
 
 /// IDTR, holds address and size of the IDT
 #[repr(C, packed)]
-struct IDTR {
+struct Idtr {
     limit: u16,
     base: usize,
 }
 
-type IDT = [IDTDescriptor; 256];
-static mut IDT: IDT = [IDTDescriptor::NULL; 256];
-static mut IDTR: IDTR = IDTR { limit: 0, base: 0 };
+type Idt = [IDTDescriptor; 256];
+static mut IDT: Idt = [IDTDescriptor::NULL; 256];
+static mut IDTR: Idtr = Idtr { limit: 0, base: 0 };
 
 // -------------------------------- All the interrupts
 macro_rules! int {
@@ -155,10 +155,10 @@ macro_rules! int {
     };
 }
 
-/// Define all interrupts
-/// ec stands for error code, means that this interrupt pushes an error-code onto the stack
-/// m stands for master, which tells interrupt handler to send EOI to master PIC
-/// s stands for slave, which tells interrupt handler to send EOI to both master and slave PICs
+// Define all interrupts
+// ec stands for error code, means that this interrupt pushes an error-code onto the stack
+// m stands for master, which tells interrupt handler to send EOI to master PIC
+// s stands for slave, which tells interrupt handler to send EOI to both master and slave PICs
 int! {
     int_0x00(0x00), int_0x01(0x01), int_0x02(0x02), int_0x03(0x03), int_0x04(0x04), int_0x05(0x05), int_0x06(0x06), int_0x07(0x07), int_0x08(0x08, ec), int_0x09(0x09), int_0x0a(0x0a, ec), int_0x0b(0x0b, ec), int_0x0c(0x0c, ec), int_0x0d(0x0d, ec), int_0x0e(0x0e, ec), int_0x0f(0x0f),
     int_0x10(0x10), int_0x11(0x11, ec), int_0x12(0x12), int_0x13(0x13), int_0x14(0x14), int_0x15(0x15, ec), int_0x16(0x16), int_0x17(0x17), int_0x18(0x18), int_0x19(0x19), int_0x1a(0x1a), int_0x1b(0x1b), int_0x1c(0x1c), int_0x1d(0x1d, ec), int_0x1e(0x1e, ec), int_0x1f(0x1f),
@@ -439,7 +439,7 @@ pub(super) fn setup() {
         IDT[0xfe] = IDTDescriptor::new(int_0xfe as usize, 0x08, 0x8E);
         IDT[0xff] = IDTDescriptor::new(int_0xff as usize, 0x08, 0x8E);
 
-        IDTR.limit = core::mem::size_of::<IDT>() as u16 - 1;
+        IDTR.limit = core::mem::size_of::<Idt>() as u16 - 1;
         IDTR.base = &raw const IDT as usize;
         core::arch::asm!("lidt ({0})", in(reg) &raw const IDTR as usize, options(att_syntax));
 

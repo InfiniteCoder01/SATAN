@@ -117,5 +117,6 @@ pub fn _panic(args: core::fmt::Arguments) -> ! {
     writer.set_color(Color::Red, Color::Black);
     writer.write_fmt(args).unwrap();
     crate::arch::interrupts::disable();
+    #[allow(clippy::empty_loop)]
     loop {}
 }

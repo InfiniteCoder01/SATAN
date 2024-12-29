@@ -37,5 +37,5 @@ SECTIONS {
 	kernel_tmp_page_address = ALIGN(4K);
 
 	/* Add a symbol that indicates the end address of the kernel. Add 4KiB for a TMP_PAGE */
-	kernel_end = . + 4096;
+	kernel_end = kernel_tmp_page_address + 4096;
 }

@@ -23,6 +23,23 @@ bitflags::bitflags! {
     }
 }
 
+/// Kinds of errors if mapping failed
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum MappingError {
+    /// Mapping over an already existing page
+    #[error("mapping over existing page at address {0:#x}")]
+    MappingOver(PhysAddr),
+    /// Mapping an unaligned address
+    #[error("mapping an unaligned address {0:#x}")]
+    UnalignedPhysicalAddress(PhysAddr),
+    /// Mapping to an unaligned address
+    #[error("mapping to an unaligned address {0:#x}")]
+    UnalignedVirtualAddress(VirtAddr),
+}
+
+/// Result type for memory mapping operations
+pub type MappingResult<T> = Result<T, MappingError>;
+
 /// Trait to be implemented by an address space
 pub trait AddressSpaceTrait {
     /// Single page table
@@ -38,10 +55,10 @@ pub trait AddressSpaceTrait {
         paddr: PhysAddr,
         page_size: arch::paging::PageSize,
         flags: MappingFlags,
-    );
+    ) -> MappingResult<()>;
 
     /// Get or create a page table layer in this layer that is associated with this virtual address
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr) -> Self::Layer;
+    fn next_layer(layer: Self::Layer, vaddr: VirtAddr) -> MappingResult<Self::Layer>;
 
     /// Get top level page table layer for this address space
     fn top_layer(&self) -> Self::Layer;
@@ -54,17 +71,24 @@ pub trait AddressSpaceTrait {
         paddr: PhysAddr,
         page_size: arch::paging::PageSize,
         flags: MappingFlags,
-    ) {
+    ) -> MappingResult<()> {
+        if !vaddr.is_aligned(page_size as usize) {
+            return Err(MappingError::UnalignedVirtualAddress(vaddr));
+        }
+        if !paddr.is_aligned(page_size as usize) {
+            return Err(MappingError::UnalignedPhysicalAddress(paddr));
+        }
+
         if Self::page_size(&layer) == page_size as usize {
-            Self::set_entry(layer, vaddr, paddr, page_size, flags);
+            Self::set_entry(layer, vaddr, paddr, page_size, flags)
         } else {
             self.map_page(
-                Self::next_layer(layer, vaddr),
+                Self::next_layer(layer, vaddr)?,
                 vaddr,
                 paddr,
                 page_size,
                 flags,
-            );
+            )
         }
     }
 

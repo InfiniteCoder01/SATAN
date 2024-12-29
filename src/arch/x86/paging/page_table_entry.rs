@@ -2,6 +2,7 @@ use super::*;
 
 bitflags::bitflags! {
     /// Page table entry flags (first byte from the right)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     #[repr(transparent)]
     pub(super) struct PTEFlags: usize {
         /// Present
@@ -47,10 +48,11 @@ impl From<MappingFlags> for PTEFlags {
 pub(super) struct PTEntry(usize);
 
 impl PTEntry {
+    pub(super) const NULL: Self = Self(0);
+
     /// Create a new entry associated with a page
-    pub(super) fn new_page(addr: PhysAddr, page_size: PageSize, flags: MappingFlags) -> Self {
-        assert!(addr.is_aligned(page_size as usize));
-        let mut flags = PTEFlags::from(flags);
+    pub(super) fn new_page(addr: PhysAddr, page_size: PageSize, flags: PTEFlags) -> Self {
+        let mut flags = flags;
         match page_size {
             #[cfg(target_arch = "x86")]
             PageSize::Size4M => flags |= PTEFlags::PS,
@@ -64,7 +66,9 @@ impl PTEntry {
     }
 
     /// Create a new entry associated with a page table
-    pub(super) fn new_page_table(addr: PhysAddr, flags: MappingFlags) {}
+    pub(super) fn new_page_table(addr: PhysAddr) -> Self {
+        Self(addr.as_usize() | (PTEFlags::P | PTEFlags::RW).bits())
+    }
 
     /// Get flags of this page table entry
     pub(super) fn flags(&self) -> PTEFlags {
