@@ -35,6 +35,12 @@ pub enum MappingError {
     /// Mapping to an unaligned address
     #[error("mapping to an unaligned address {0:#x}")]
     UnalignedVirtualAddress(VirtAddr),
+    /// Unmapping a page that wasn't mapped
+    #[error("unmapping a page that wasn't mapped (address {0:#x})")]
+    UnmappingNotMapped(VirtAddr),
+    /// Unmapping part of a large page
+    #[error("unmapping part of a large page at {0:#x}")]
+    UnmappingPartOfLargePage(PhysAddr),
 }
 
 /// Result type for memory mapping operations
@@ -57,13 +63,23 @@ pub trait AddressSpaceTrait {
         flags: MappingFlags,
     ) -> MappingResult<()>;
 
-    /// Get or create a page table layer in this layer that is associated with this virtual address
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr) -> MappingResult<Self::Layer>;
+    /// Unset an entry in the page table layer
+    fn unset_entry(
+        layer: Self::Layer,
+        vaddr: VirtAddr,
+        page_size: arch::paging::PageSize,
+    ) -> MappingResult<()>;
+
+    /// Get or create (only if map is true) a page table layer in this layer
+    /// that is associated with this virtual address. map parameter indicates
+    /// if this call corresponds to mapping/unmapping operation
+    fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer>;
 
     /// Get top level page table layer for this address space
     fn top_layer(&self) -> Self::Layer;
 
-    /// Map a single (possibly large/huge) page. As a layer should take [`AddressSpaceTrait::top_layer`]
+    /// Map a single (possibly large/huge) page.
+    /// As a layer should take [`AddressSpaceTrait::top_layer`]
     fn map_page(
         &self,
         layer: Self::Layer,
@@ -83,7 +99,7 @@ pub trait AddressSpaceTrait {
             Self::set_entry(layer, vaddr, paddr, page_size, flags)
         } else {
             self.map_page(
-                Self::next_layer(layer, vaddr)?,
+                Self::next_layer(layer, vaddr, true)?,
                 vaddr,
                 paddr,
                 page_size,
@@ -92,6 +108,22 @@ pub trait AddressSpaceTrait {
         }
     }
 
-    // TODO!!!
-    fn unmap_page(&self, vaddr: VirtAddr, page_size: arch::paging::PageSize) {}
+    /// Unmap a single (possibly large/huge) page or a whole page table of the same size.
+    /// As a layer should take [`AddressSpaceTrait::top_layer`]
+    fn unmap_page(
+        &self,
+        layer: Self::Layer,
+        vaddr: VirtAddr,
+        page_size: arch::paging::PageSize,
+    ) -> MappingResult<()> {
+        if !vaddr.is_aligned(page_size as usize) {
+            return Err(MappingError::UnalignedVirtualAddress(vaddr));
+        }
+
+        if Self::page_size(&layer) == page_size as usize {
+            Self::unset_entry(layer, vaddr, page_size)
+        } else {
+            self.unmap_page(Self::next_layer(layer, vaddr, false)?, vaddr, page_size)
+        }
+    }
 }

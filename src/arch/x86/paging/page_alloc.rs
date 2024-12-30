@@ -52,4 +52,13 @@ pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
     };
     crate::println!("Wrote!");
     crate::println!("Testing page mapping: {}", unsafe { *test_r });
+    kernel_address_space
+        .unmap_page(
+            kernel_address_space.top_layer(),
+            VirtAddr::from_mut_ptr_of(test_r),
+            PageSize::Size4K,
+        )
+        .unwrap();
+    crate::println!("Testing page unmapping (you should see a page fault)...");
+    crate::println!("If you see this everything broke: {}", unsafe { *test_r });
 }

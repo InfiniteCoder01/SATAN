@@ -43,14 +43,37 @@ impl AddressSpaceTrait for AddressSpace {
         Ok(())
     }
 
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr) -> MappingResult<Self::Layer> {
+    fn unset_entry(
+        layer: Self::Layer,
+        vaddr: VirtAddr,
+        page_size: crate::arch::paging::PageSize,
+    ) -> MappingResult<()> {
+        debug_assert_eq!(1usize << layer.1, page_size as usize);
+        let entry = Self::get_entry(&layer, vaddr);
+        if !entry.flags().contains(PTEFlags::P) {
+            return Err(MappingError::UnmappingNotMapped(vaddr));
+        }
+        *entry = PTEntry::NULL;
+        flush_tlb(vaddr);
+        Ok(())
+    }
+
+    fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer> {
         let entry = Self::get_entry(&layer, vaddr);
 
         if entry.flags().contains(PTEFlags::P | PTEFlags::PS) {
-            return Err(MappingError::MappingOver(entry.address()));
+            if map {
+                return Err(MappingError::MappingOver(entry.address()));
+            } else {
+                return Err(MappingError::UnmappingPartOfLargePage(entry.address()));
+            }
         }
 
         let entry = if !entry.flags().contains(PTEFlags::P) {
+            if !map {
+                return Err(MappingError::UnmappingNotMapped(vaddr));
+            }
+
             // Create a new page table
             let page_table_addr = page_alloc::alloc_page(PageSize::Size4K as _);
             let page_table = tmp_page::map(page_table_addr);
