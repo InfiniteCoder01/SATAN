@@ -61,7 +61,16 @@ const PAGE_TABLE_ENTRIES: usize = 1 << PAGE_LEVEL_BITS;
 /// Page table type
 type PageTable = [PTEntry; PAGE_TABLE_ENTRIES];
 
-// -------------------------------- Memory mapping
+/// Flush transition lookaside buffer, required when an entry for virtual address was changed
+fn flush_tlb(address: VirtAddr) {
+    unsafe {
+        core::arch::asm!(
+            "invlpg ({address})",
+            address = in(reg) address.as_usize(),
+            options(att_syntax)
+        );
+    }
+}
 
 /// Setup paging
 pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {

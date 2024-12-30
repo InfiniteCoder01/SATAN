@@ -44,8 +44,15 @@ impl From<MappingFlags> for PTEFlags {
 }
 
 /// Page table entry
-#[repr(C, packed)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub(super) struct PTEntry(usize);
+
+impl core::fmt::Debug for PTEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PTEntry({:#x})", self.0)
+    }
+}
 
 impl PTEntry {
     pub(super) const NULL: Self = Self(0);

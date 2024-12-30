@@ -25,7 +25,7 @@ pub enum Color {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(C, packed)]
+#[repr(C)]
 struct Character {
     character: u8,
     color: u8,

@@ -104,6 +104,7 @@ mmap:
 
 .extern kernel_start
 .extern data_start
+.extern kernel_tmp_page_address
 .extern kernel_end
 
 .extern ksetup
@@ -177,8 +178,9 @@ after_gdt:
     call mmap
 
     # Setup tmp page
-    sub $4, %edi
-    add $KERNEL_OFFSET, %edi
+    mov $kernel_tmp_page_address - KERNEL_OFFSET, %edi
+    shr $10, %edi
+    add $kernel_page_table1_higher_half, %edi # Add to the page table address
     mov %edi, kernel_tmp_page_entry_address - KERNEL_OFFSET
 
     # Enable paging

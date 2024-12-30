@@ -11,7 +11,7 @@ extern "C" {
 
 /// Map a physical address to the TMP page. Returns virtual address of the TMP page
 pub(super) fn map(addr: PhysAddr) -> VirtAddr {
-    assert!(
+    debug_assert!(
         addr.is_aligned_4k(),
         "mapping an unaligned address {:?} to tmp page",
         addr
@@ -19,5 +19,6 @@ pub(super) fn map(addr: PhysAddr) -> VirtAddr {
     unsafe {
         *TMP_PAGE_ENTRY = PTEntry::new_page(addr, PageSize::Size4K, PTEFlags::P | PTEFlags::RW);
     }
+    flush_tlb(address());
     address()
 }

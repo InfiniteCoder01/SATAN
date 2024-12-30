@@ -54,7 +54,7 @@ fn interrupt_handler(interrupt: u8, error_code: usize) {
 
 // -------------------------------- IDT
 /// IDT descriptor, one per interrupt
-#[repr(C, packed)]
+#[repr(C)]
 struct IDTDescriptor {
     offset_1: u16,       // offset bits 0..15
     selector: u16,       // a code segment selector in GDT or LDT

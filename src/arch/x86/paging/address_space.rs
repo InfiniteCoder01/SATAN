@@ -38,12 +38,8 @@ impl AddressSpaceTrait for AddressSpace {
         if entry.flags().contains(PTEFlags::P) {
             return Err(MappingError::MappingOver(entry.address()));
         }
-        crate::println!(
-            "Setting an entry in PT {:?} w/ page size {:#x}",
-            layer.0,
-            page_size as usize,
-        );
         *entry = PTEntry::new_page(paddr, page_size, flags.into());
+        flush_tlb(vaddr);
         Ok(())
     }
 
@@ -66,7 +62,6 @@ impl AddressSpaceTrait for AddressSpace {
             }
 
             // Set the entry to this page table
-            crate::println!("Setting an entry in PT {:?} to a page table", layer.0);
             let entry = Self::get_entry(&layer, vaddr);
             *entry = PTEntry::new_page_table(page_table_addr);
             entry
