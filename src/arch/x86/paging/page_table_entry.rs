@@ -17,6 +17,8 @@ bitflags::bitflags! {
         const PCD     = 1 << 4;
         /// Page size; if set this entry maps a large/huge page; otherwise, this entry references a normal page/page table.
         const PS      = 1 << 7;
+        /// Global; if set, invulnerable to TLB invalidation
+        const G       = 1 << 8;
     }
 }
 
@@ -38,6 +40,9 @@ impl From<MappingFlags> for PTEFlags {
         }
         if value.contains(MappingFlags::UNCACHED) {
             flags |= Self::PCD;
+        }
+        if value.contains(MappingFlags::GLOBAL) {
+            flags |= Self::G;
         }
         flags
     }

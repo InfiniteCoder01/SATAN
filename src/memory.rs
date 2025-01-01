@@ -6,7 +6,7 @@ bitflags::bitflags! {
     /// memory region permissions and attributes.
     #[derive(Clone, Copy, PartialEq)]
     pub struct MappingFlags: usize {
-        /// Memory is present. If not, generate a page fault interrupt
+        /// Memory is present. If not, generate a page fault
         const PRESENT       = 1 << 0;
         /// The memory is readable.
         const READ          = 1 << 1;
@@ -16,10 +16,10 @@ bitflags::bitflags! {
         const EXECUTE       = 1 << 3;
         /// The memory is user accessible.
         const USER          = 1 << 4;
-        /// The memory is device memory.
-        const DEVICE        = 1 << 5;
         /// The memory is uncached.
-        const UNCACHED      = 1 << 6;
+        const UNCACHED      = 1 << 5;
+        /// The memory globally accessible, doesn't invalidate TLB.
+        const GLOBAL        = 1 << 6;
     }
 }
 
