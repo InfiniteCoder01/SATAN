@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 
-#if this is not your path , kindly change it
-export PREFIX="$HOME/opt/cross"
-export PATH="$PREFIX/bin:$PATH"
-
-export ARCH=x86
-export TOOLCHAIN=i686-elf
-export QEMU_SYSTEM=x86_64
+# If this is not your path, kindly change it
+export CROSS_CC="${CROSS_CC:-$HOME/opt/cross/bin/i686-elf-gcc}"
+export ARCH=x86/x32
+export QEMU_SYSTEM=i386
 
 # Colors
 if command -v tput &> /dev/null; then
@@ -27,101 +24,41 @@ if command -v tput &> /dev/null; then
 	fi
 fi
 
-# Makefile
-generateMakefile() {
-	echo "${green}Regenerating Makefile...${normal}"
-	asm_files=("kernel/arch/$ARCH/kernel.asm")
-	c_files=()
-	objects=("build/arch/$ARCH/kernel.asm.o")
-
-	for file in $(find kernel -type f -name '*.asm' ! -name kernel.asm \( -path "kernel/arch/$ARCH/*" -o ! -path "kernel/arch/*" \)); do
-		asm_files+=($file)
-		objects+=(build${file#kernel}.o)
-	done
-
-	for file in $(find kernel -type f -name '*.c'); do
-		c_files+=($file)
-		object=${file#kernel}
-		objects+=(build${object%.c}.o)
-	done
-
-	TAB="$(printf '\t')"
-	cat > Makefile <<-EOF
-	OBJECTS = ${objects[*]}
-    INCLUDES = -I./kernel/arch/$ARCH
-	FLAGS = -Ikernel -I"kernel/arch/$ARCH " -g -ffreestanding -falign-jumps -falign-functions -falign-labels -falign-loops -fstrength-reduce -fomit-frame-pointer -finline-functions -Wno-unused-function -fno-builtin -Werror -Wno-unused-label -Wno-cpp -Wno-unused-parameter -nostdlib -nostartfiles -nodefaultlibs -Wall -O0 -Iinc
-	LINKER_FLAGS = -O0
-	.PHONY: all
-	all: bin/os.bin
-
-	.PHONY: clean
-	clean:
-	${TAB}@rm -rf bin
-	${TAB}@rm -rf build
-	${TAB}@echo
-
-	bin/os.bin: bin/boot.bin bin/kernel.bin
-	${TAB}@echo "${green}Building the system...${normal}"
-	${TAB}@rm -rf bin/os.bin
-	${TAB}@dd if=bin/boot.bin >> bin/os.bin
-	${TAB}@dd if=bin/kernel.bin >> bin/os.bin
-	${TAB}@dd if=/dev/zero bs=512 count=100 >> bin/os.bin
-	${TAB}@echo Done!
-
-	bin/kernel.bin: \$(OBJECTS)
-	${TAB}@echo "${green}Building the kernel...${normal}"
-	${TAB}@\$(TOOLCHAIN)-ld \$(LINKER_FLAGS) -g -relocatable \$(OBJECTS) -o build/kernelfull.o
-	${TAB}@\$(TOOLCHAIN)-gcc \$(LINKER_FLAGS) -T linker.ld -o bin/kernel.bin -ffreestanding -nostdlib build/kernelfull.o
-
-	bin/boot.bin: bootloader/$ARCH/boot.asm
-	${TAB}@echo "${green}Building the bootloader...${normal}"
-	${TAB}@mkdir -p bin
-	${TAB}@nasm -f bin bootloader/$ARCH/boot.asm -o bin/boot.bin
-	EOF
-
-	((total=${#asm_files[@]} + ${#c_files[@]}))
-	progress=0
-	for file in "${asm_files[@]}"; do
-		object=(build${file#kernel}.o)
-		cat >> Makefile <<-EOF
-		$object: $file
-		${TAB}@echo "${green}[$((progress * 100 / total))%]${normal} Building $file..."
-		${TAB}@mkdir -p $(dirname "$object")
-		${TAB}@nasm -f elf -g $file -o $object
-
-		EOF
-		((progress++))
-	done
-
-	for file in "${c_files[@]}"; do
-		object=${file%.c}
-		object=build${object#kernel}.o
-		cat >> Makefile <<-EOF
-		$object: $file
-		${TAB}@echo "${green}[$((progress * 100 / total))%]${normal} Building $file..."
-		${TAB}@mkdir -p $(dirname "$object")
-		${TAB}@\$(TOOLCHAIN)-gcc \$(INCLUDES) \$(FLAGS) -std=gnu99 -c $file -o $object
-
-		EOF
-		((progress++))
-	done
-
-	echo "${green}Done!${normal}"
-}
-
 # Utils
 build() {
-	generateMakefile
-	make
+	if ! cargo build; then
+		return -1
+	fi
+
+	KERNEL="target/target/debug/satan"
+	GRUB_CFG="src/arch/$ARCH/grub"
+	if [ "$KERNEL" -nt "bin/os.iso" ] || [ "$GRUB_CFG" -nt "bin/os.iso" ]; then
+		echo "${green}Building the system...${normal}"
+		rm -rf bin/iso bin/os.iso
+		mkdir -p bin/iso/boot
+		cp -r "$GRUB_CFG" bin/iso/boot
+		cp "$KERNEL" bin/iso/boot/kernel.bin
+		grub-mkrescue -o bin/os.iso bin/iso
+		echo "${green}Done!${normal}"
+	fi
 }
 
 run() {
-	qemu-system-$QEMU_SYSTEM -drive file=bin/os.bin,format=raw
+	qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso
+}
+
+debug() {
+	qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso -s -S &
+	rust-gdb target/target/debug/satan -x gdbinit
+}
+
+clean() {
+	rm -rf bin target
 }
 
 print() {
 	echo "ARCH: $ARCH"
-	echo "TOOLCHAIN: $TOOLCHAIN"
+	echo "CROSS_CC: $CROSS_CC"
 	echo "QEMU System: $QEMU_SYSTEM"
 }
 
@@ -131,9 +68,9 @@ help() {
 	Usage: ./build.sh [--arch x86] [--toolchain i686-elf] [--quemu-system x86_64] [command]
 	When ran without command, REPL mode will be entered
 	Commands:
-	generate/regenerate - (re)generate the Makefile
-	build - (re)generate the Makefile and build the OS
+	build - build kernel and OS
 	run - build and run the OS
+	debug - build and run the OS, drop into gdb
 	print - print current parameters
 	clean - remove all build artifacts
 	help - show this message
@@ -143,11 +80,11 @@ help() {
 
 command() {
 	case $1 in
-		generate|regenerate) generateMakefile;;
 		build) build;;
 		run) build && run;;
+		debug) build && debug;;
 		print) print;;
-		clean)  make clean;;
+		clean)  clean;;
 		help)  help;;
 		quit|exit|q)  exit 0;;
 		*) echo -e "Unknown command $1.\nUse help to see the available options";;
@@ -167,9 +104,16 @@ repl() {
 	Type help for list of availble commands
 	EOF
  	while true; do
- 		printf "> "
- 		read -e line
- 		command $line
+		if command -v zsh &> /dev/null; then
+			REPLY=$(zsh -c 'export REPLY="" && vared -p "> " REPLY && echo $REPLY')
+		else
+			read -e -r -p "> "
+		fi
+ 		if [[ $REPLY == \:* ]]; then
+ 			bash -c "${REPLY#\:}"
+ 		else
+	 		command $REPLY
+ 		fi
  	done
 }
 
@@ -183,8 +127,8 @@ while [[ $# -gt 0 ]]; do
 			shift
 			shift
 		;;
-		--toolchain)
-			export TOOLCHAIN="$2"
+		--cross-cc)
+			export CROSS_CC="$2"
 			shift
 			shift
 		;;

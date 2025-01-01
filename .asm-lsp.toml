@@ -1,0 +1,22 @@
+[default_config]
+version = "0.9.0"
+assembler = "gas"
+instruction_set = "x86/x86-64"
+
+[default_config.opts]
+compiler = "as"
+compile_flags_txt = []
+diagnostics = true
+default_diagnostics = false
+
+[[project]]
+path = "src/arch/x86/x32"
+version = "0.9.0"
+assembler = "gas"
+instruction_set = "x86"
+
+[project.opts]
+compiler = "as"
+compile_flags_txt = []
+diagnostics = true
+default_diagnostics = false
