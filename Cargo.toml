@@ -23,6 +23,7 @@ bitfield-struct = "0.10.0"
 bitflags = "2.6.0"
 
 memory_addr = "0.3.1"
+lock_api = "0.4.12"
 
 [target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dependencies]
 multiboot2 = { version = "0.23.1", default-features = false }

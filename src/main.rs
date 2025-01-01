@@ -5,6 +5,9 @@
     feature(abi_x86_interrupt)
 )]
 
+/// Synchronization primitives
+pub mod sync;
+
 /// Arch-specific things
 pub mod arch;
 

@@ -8,14 +8,12 @@ impl AddressSpace {
     fn get_entry(
         layer: &<Self as AddressSpaceTrait>::Layer,
         vaddr: VirtAddr,
-    ) -> &'static mut PTEntry {
-        let page_table = tmp_page::map(layer.0);
-        let page_table = page_table.as_mut_ptr_of::<PageTable>();
+    ) -> crate::sync::MappedLockGuard<PTEntry> {
+        let page_table = tmp_page::map::<PageTable>(layer.0);
 
         let mask = PAGE_TABLE_ENTRIES - 1;
-
         let index = vaddr.as_usize() >> layer.1 & mask;
-        unsafe { &mut (*page_table)[index] }
+        crate::sync::MappedLockGuard::map(page_table, |page_table| &mut page_table[index])
     }
 }
 
@@ -34,7 +32,7 @@ impl AddressSpaceTrait for AddressSpace {
         flags: MappingFlags,
     ) -> MappingResult<()> {
         debug_assert_eq!(1usize << layer.1, page_size as usize);
-        let entry = Self::get_entry(&layer, vaddr);
+        let mut entry = Self::get_entry(&layer, vaddr);
         if entry.flags().contains(PTEFlags::P) {
             return Err(MappingError::MappingOver(entry.address()));
         }
@@ -49,7 +47,7 @@ impl AddressSpaceTrait for AddressSpace {
         page_size: crate::arch::paging::PageSize,
     ) -> MappingResult<()> {
         debug_assert_eq!(1usize << layer.1, page_size as usize);
-        let entry = Self::get_entry(&layer, vaddr);
+        let mut entry = Self::get_entry(&layer, vaddr);
         if !entry.flags().contains(PTEFlags::P) {
             return Err(MappingError::UnmappingNotMapped(vaddr));
         }
@@ -59,7 +57,7 @@ impl AddressSpaceTrait for AddressSpace {
     }
 
     fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer> {
-        let entry = Self::get_entry(&layer, vaddr);
+        let mut entry = Self::get_entry(&layer, vaddr);
 
         if entry.flags().contains(PTEFlags::P | PTEFlags::PS) {
             if map {
@@ -70,22 +68,24 @@ impl AddressSpaceTrait for AddressSpace {
         }
 
         let entry = if !entry.flags().contains(PTEFlags::P) {
+            drop(entry);
             if !map {
                 return Err(MappingError::UnmappingNotMapped(vaddr));
             }
 
             // Create a new page table
             let page_table_addr = page_alloc::alloc_page(PageSize::Size4K as _);
-            let page_table = tmp_page::map(page_table_addr);
-            let page_table = page_table.as_mut_ptr_of::<PageTable>();
+            let mut page_table = tmp_page::map::<PageTable>(page_table_addr);
 
             // Clear the page table
             for index in 0..PAGE_TABLE_ENTRIES {
-                unsafe { (*page_table)[index] = PTEntry::NULL };
+                page_table[index] = PTEntry::NULL;
             }
 
+            drop(page_table);
+
             // Set the entry to this page table
-            let entry = Self::get_entry(&layer, vaddr);
+            let mut entry = Self::get_entry(&layer, vaddr);
             *entry = PTEntry::new_page_table(page_table_addr);
             entry
         } else {
