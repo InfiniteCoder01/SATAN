@@ -309,6 +309,7 @@ dependencies = [
  "bitfield-struct",
  "bitflags",
  "cc",
+ "lock_api",
  "memory_addr",
  "multiboot2",
  "portable",

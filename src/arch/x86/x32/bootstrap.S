@@ -104,8 +104,9 @@ mmap:
 
 .extern kernel_start
 .extern data_start
-.extern kernel_tmp_page_address
 .extern kernel_end
+.extern kernel_tmp_page_address
+.extern kernel_reserved_end
 
 .extern ksetup
 .global _start
@@ -162,7 +163,7 @@ after_gdt:
 
     # Check if kernel fits
     mov $KERNEL_OFFSET + 0x400000, %eax
-    cmp $kernel_end, %eax
+    cmp $kernel_reserved_end, %eax
     jb kernelTooBig
     
     mov $kernel_start - KERNEL_OFFSET, %esi    # Start address
@@ -171,10 +172,10 @@ after_gdt:
     mov $kernel_start - KERNEL_OFFSET, %edi
     shr $10, %edi
     add $kernel_page_table1_higher_half - KERNEL_OFFSET, %edi # Add to the page table address
-    mov $0b01, %ebx                            # Flags
+    mov $0b100000001, %ebx                     # Flags
     call mmap
     mov $kernel_end - KERNEL_OFFSET, %eax      # End address
-    mov $0b11, %ebx                            # Flags
+    mov $0b100000011, %ebx                     # Flags
     call mmap
 
     # Setup tmp page
