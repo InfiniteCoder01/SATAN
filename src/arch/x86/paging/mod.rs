@@ -1,4 +1,4 @@
-use crate::memory::*;
+pub use memory_addr::{pa, va, va_range, MemoryAddr, PhysAddr, VirtAddr};
 
 /// Temproary page, space for it is allocated after the kernel in the kernel address space.
 /// Used to map page tables and manipulate their entries
@@ -10,10 +10,11 @@ use page_table_entry::{PTEFlags, PTEntry};
 
 /// Address space implementation
 mod address_space;
-use address_space::AddressSpace;
+pub use address_space::AddressSpace;
 
 /// Page allocator manages free pages
-mod page_alloc;
+mod early_page_alloc;
+pub use early_page_alloc::early_alloc_page;
 
 /// Page sizes possible to map
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -85,7 +86,7 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
         );
     }
 
-    page_alloc::setup_page_info_table(boot_info);
+    early_page_alloc::setup_page_info_table(boot_info);
 }
 
 macro_rules! linker_symbol {

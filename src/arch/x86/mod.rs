@@ -3,12 +3,14 @@ core::arch::global_asm!(include_str!("x32/bootstrap.S"), options(att_syntax));
 
 /// Early logging facilities
 pub mod early_logger;
+pub use early_logger::{_panic, _print};
 
 /// Interrupts and IDT
 pub mod interrupts;
 
 /// Paging implementation
-/// I spent a lot of time here
+/// I spent a lot of time here.
+/// And I hate every single second of it.
 pub mod paging;
 
 /// Kernel setup function. First thing that is called
