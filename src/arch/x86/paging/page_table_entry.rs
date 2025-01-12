@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::MappingFlags;
 
 bitflags::bitflags! {
     /// Page table entry flags (first byte from the right)

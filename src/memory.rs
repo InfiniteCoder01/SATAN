@@ -1,129 +1,71 @@
-use super::*;
 pub use memory_addr::{pa, va, va_range, MemoryAddr, PhysAddr, VirtAddr};
 
-bitflags::bitflags! {
-    /// Generic page table entry flags that indicate the corresponding mapped
-    /// memory region permissions and attributes.
-    #[derive(Clone, Copy, PartialEq)]
-    pub struct MappingFlags: usize {
-        /// Memory is present. If not, generate a page fault
-        const PRESENT       = 1 << 0;
-        /// The memory is readable.
-        const READ          = 1 << 1;
-        /// The memory is writable.
-        const WRITE         = 1 << 2;
-        /// The memory is executable.
-        const EXECUTE       = 1 << 3;
-        /// The memory is user accessible.
-        const USER          = 1 << 4;
-        /// The memory is uncached.
-        const UNCACHED      = 1 << 5;
-        /// The memory globally accessible, doesn't invalidate TLB.
-        const GLOBAL        = 1 << 6;
+pub mod address_space;
+pub use address_space::{AddressSpaceTrait, MappingError, MappingFlags, MappingResult};
+
+/// Kernel page info entry
+pub struct PageInfo {
+    uses: core::sync::atomic::AtomicU32,
+}
+
+static mut PAGE_INFO_TABLE: &[PageInfo] = &[];
+
+/// Allocate page of size page_size aligned to page_size
+pub fn alloc_page(page_size: crate::arch::paging::PageSize) -> PhysAddr {
+    let page_info_table = unsafe { PAGE_INFO_TABLE };
+    if page_info_table.is_empty() {
+        crate::arch::paging::early_alloc_page(page_size)
+    } else {
+        todo!()
     }
 }
 
-/// Kinds of errors if mapping failed
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum MappingError {
-    /// Mapping over an already existing page
-    #[error("mapping over existing page at address {0:#x}")]
-    MappingOver(PhysAddr),
-    /// Mapping an unaligned address
-    #[error("mapping an unaligned address {0:#x}")]
-    UnalignedPhysicalAddress(PhysAddr),
-    /// Mapping to an unaligned address
-    #[error("mapping to an unaligned address {0:#x}")]
-    UnalignedVirtualAddress(VirtAddr),
-    /// Unmapping a page that wasn't mapped
-    #[error("unmapping a page that wasn't mapped (address {0:#x})")]
-    UnmappingNotMapped(VirtAddr),
-    /// Unmapping part of a large page
-    #[error("unmapping part of a large page at {0:#x}")]
-    UnmappingPartOfLargePage(PhysAddr),
+/// Free page allocated with [alloc_page]
+pub fn free_page(addr: PhysAddr, page_size: crate::arch::paging::PageSize) {
+    let page_info_table = unsafe { PAGE_INFO_TABLE };
+    if page_info_table.is_empty() {
+        panic!("Can't free page without page info table");
+    }
+    todo!()
 }
 
-/// Result type for memory mapping operations
-pub type MappingResult<T> = Result<T, MappingError>;
+/// Wrap a u64 in this struct to display it with size postfix (KiB, MiB, GiB, etc.)
+pub struct FormatSize(pub u64);
 
-/// Trait to be implemented by an address space
-pub trait AddressSpaceTrait {
-    /// Single page table
-    type Layer;
+impl core::ops::Deref for FormatSize {
+    type Target = u64;
 
-    /// Page size of one page
-    fn page_size(layer: &Self::Layer) -> usize;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
-    /// Set an entry in the page table layer to map vaddr to paddr with size and flags
-    fn set_entry(
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        paddr: PhysAddr,
-        page_size: arch::paging::PageSize,
-        flags: MappingFlags,
-    ) -> MappingResult<()>;
+impl core::ops::DerefMut for FormatSize {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
-    /// Unset an entry in the page table layer
-    fn unset_entry(
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        page_size: arch::paging::PageSize,
-    ) -> MappingResult<()>;
-
-    /// Get or create (only if map is true) a page table layer in this layer
-    /// that is associated with this virtual address. map parameter indicates
-    /// if this call corresponds to mapping/unmapping operation
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer>;
-
-    /// Get top level page table layer for this address space
-    fn top_layer(&self) -> Self::Layer;
-
-    /// Map a single (possibly large/huge) page.
-    /// As a layer should take [`AddressSpaceTrait::top_layer`]
-    fn map_page(
-        &self,
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        paddr: PhysAddr,
-        page_size: arch::paging::PageSize,
-        flags: MappingFlags,
-    ) -> MappingResult<()> {
-        if !vaddr.is_aligned(page_size as usize) {
-            return Err(MappingError::UnalignedVirtualAddress(vaddr));
-        }
-        if !paddr.is_aligned(page_size as usize) {
-            return Err(MappingError::UnalignedPhysicalAddress(paddr));
+impl core::fmt::Display for FormatSize {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut value = self.0;
+        let mut order = 0;
+        let orders = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+        while value >= 1 << 10 && order + 1 < orders.len() {
+            value >>= 10;
+            order += 1;
         }
 
-        if Self::page_size(&layer) == page_size as usize {
-            Self::set_entry(layer, vaddr, paddr, page_size, flags)
+        if value >= 10 {
+            write!(f, "{} {}", value, orders[order])
         } else {
-            self.map_page(
-                Self::next_layer(layer, vaddr, true)?,
-                vaddr,
-                paddr,
-                page_size,
-                flags,
+            write!(
+                f,
+                "{}.{} {}",
+                value,
+                (self.0 * 10 >> order * 10) % 10,
+                orders[order]
             )
-        }
-    }
-
-    /// Unmap a single (possibly large/huge) page or a whole page table of the same size.
-    /// As a layer should take [`AddressSpaceTrait::top_layer`]
-    fn unmap_page(
-        &self,
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        page_size: arch::paging::PageSize,
-    ) -> MappingResult<()> {
-        if !vaddr.is_aligned(page_size as usize) {
-            return Err(MappingError::UnalignedVirtualAddress(vaddr));
-        }
-
-        if Self::page_size(&layer) == page_size as usize {
-            Self::unset_entry(layer, vaddr, page_size)
-        } else {
-            self.unmap_page(Self::next_layer(layer, vaddr, false)?, vaddr, page_size)
         }
     }
 }

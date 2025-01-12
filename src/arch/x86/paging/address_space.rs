@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::*;
 
 /// Address space struct
 pub struct AddressSpace(pub PhysAddr);
@@ -74,7 +75,7 @@ impl AddressSpaceTrait for AddressSpace {
             }
 
             // Create a new page table
-            let page_table_addr = page_alloc::alloc_page(PageSize::Size4K as _);
+            let page_table_addr = crate::memory::alloc_page(PageSize::Size4K as _);
             let mut page_table = tmp_page::map::<PageTable>(page_table_addr);
 
             // Clear the page table

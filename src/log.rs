@@ -2,7 +2,7 @@ use core::panic::PanicInfo;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    crate::arch::early_logger::_panic(format_args!("{}", info));
+    crate::arch::_panic(format_args!("{}", info));
 }
 
 #[macro_export]
@@ -13,5 +13,5 @@ macro_rules! println {
 
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::arch::early_logger::_print(format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::arch::_print(format_args!($($arg)*)));
 }
