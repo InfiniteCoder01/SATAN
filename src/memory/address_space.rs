@@ -126,4 +126,45 @@ pub trait AddressSpaceTrait {
             self.unmap_page(Self::next_layer(layer, vaddr, false)?, vaddr, page_size)
         }
     }
+
+    /// Allocate and map a region of memory into
+    /// the address space. On success returns
+    /// actual address region has been mapped to.
+    /// vaddr must be a valid hint
+    fn map_alloc(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        flags: MappingFlags,
+    ) -> MappingResult<VirtAddr> {
+        // TODO: Bigger pages
+        let min_page = crate::arch::paging::PageSize::min();
+        debug_assert!(vaddr.is_aligned(min_page as usize));
+        debug_assert!(size % min_page as usize == 0);
+        for page in 0..size / min_page as usize {
+            self.map_page(
+                self.top_layer(),
+                vaddr + page * min_page as usize,
+                crate::memory::alloc_page(min_page),
+                min_page,
+                flags,
+            )?;
+        }
+        Ok(vaddr)
+    }
+
+    /// Allocate and map a region of memory into
+    /// the address space. On success returns
+    /// actual address region has been mapped to.
+    /// vaddr must be a valid hint. Value is uninit
+    fn map_alloc_ty<T>(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        flags: MappingFlags,
+    ) -> MappingResult<&mut core::mem::MaybeUninit<T>> {
+        Ok(unsafe { &mut *self.map_alloc(vaddr, size, flags)?.as_mut_ptr_of() })
+    }
+
+    // TODO: Unmap
 }

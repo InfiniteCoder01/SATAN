@@ -1,8 +1,7 @@
 use super::*;
-use crate::memory::AddressSpaceTrait;
+use crate::memory::{AddressSpaceTrait, MappingFlags};
 
 linker_symbol! {
-    kernel_early_alloc_start(KERNEL_EARLY_ALLOC_START) => "kernel_tmp_page_address";
     kernel_reserved_end(KERNEL_RESERVED_END) => "kernel_reserved_end";
 }
 
@@ -13,18 +12,19 @@ struct EarlyPageAllocator {
 }
 
 impl EarlyPageAllocator {
-    fn is_page_free(&self, addr: PhysAddr, page_size: PageSize) -> bool {
+    /// Get next possibly free region of memory to try to fit page. Returns none if page fits
+    fn next_possibly_free(&self, addr: PhysAddr, page_size: PageSize) -> Option<PhysAddr> {
         let start = addr.as_usize();
         let end = addr.as_usize() + page_size as usize;
 
         // * Check for overlap
         // With kernel
         if addr < kernel_virt2phys(kernel_reserved_end()) {
-            return false;
+            return Some(kernel_virt2phys(kernel_reserved_end()));
         }
         // With boot info structure
         if start < self.boot_info.end_address() && end > self.boot_info.start_address() {
-            return false;
+            return Some(self.boot_info.end_address().into());
         }
 
         // * Check for memory region validity
@@ -33,23 +33,24 @@ impl EarlyPageAllocator {
                 use multiboot2::MemoryAreaType;
                 match MemoryAreaType::from(region.typ()) {
                     MemoryAreaType::Available => (),
-                    _ => return false,
+                    _ => return Some((region.end_address() as usize).into()),
                 }
             }
         }
-        true
+        None
     }
 }
 
-static mut EARLY_ALLOCATOR: Option<EarlyPageAllocator> = None;
+static EARLY_ALLOCATOR: spin::Mutex<Option<EarlyPageAllocator>> = spin::Mutex::new(None);
 
 pub fn early_alloc_page(page_size: PageSize) -> PhysAddr {
-    let Some(allocator) = (unsafe { EARLY_ALLOCATOR.as_mut() }) else {
+    let mut allocator = crate::sync::lock_nb(&EARLY_ALLOCATOR);
+    let Some(allocator) = allocator.as_mut() else {
         panic!("Early allocator not available")
     };
     let mut addr = allocator.alloc_start.align_up(page_size as usize);
-    while !allocator.is_page_free(addr, page_size) {
-        addr += page_size as usize;
+    while let Some(next) = allocator.next_possibly_free(addr, page_size) {
+        addr = next.align_up(page_size as usize);
     }
     allocator.alloc_start = addr + page_size as usize;
     addr
@@ -59,12 +60,14 @@ pub fn early_alloc_page(page_size: PageSize) -> PhysAddr {
 pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
     let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
     let kernel_address_space = AddressSpace(kernel_virt2phys(kernel_address_space));
-    unsafe {
-        EARLY_ALLOCATOR = Some(EarlyPageAllocator {
-            alloc_start: kernel_virt2phys(kernel_reserved_end()),
-            boot_info: core::mem::transmute(boot_info),
-        });
-    }
+    *crate::sync::lock_nb(&EARLY_ALLOCATOR) = Some(EarlyPageAllocator {
+        alloc_start: kernel_virt2phys(kernel_reserved_end()),
+        boot_info: unsafe {
+            core::mem::transmute::<&multiboot2::BootInformation, &multiboot2::BootInformation>(
+                boot_info,
+            )
+        },
+    });
 
     // Get the address limit (last usable physical address)
     let mut address_limit = 0;
@@ -90,24 +93,38 @@ pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
     let page_info_table_size =
         page_info_table_entries * core::mem::size_of::<crate::memory::PageInfo>();
 
-    /// Allocate and map page info table
-    unsafe {
-        // EARLY_PAGE_ALLOC_ADDRESS = kernel_virt2phys(kernel_reserved_end());
-        // PAGE_INFO_TABLE = core::slice::from_raw_parts_mut(
-        //     kernel_reserved_end().as_mut_ptr_of(),
-        //     page_info_table_entries,
-        // );
+    // Allocate and map page info table
+    let page_info_table_address = kernel_reserved_end().align_up_4k();
+    let page_info_table_address = kernel_address_space
+        .map_alloc(
+            page_info_table_address,
+            memory_addr::align_up_4k(page_info_table_size),
+            MappingFlags::PRESENT | MappingFlags::READ | MappingFlags::WRITE | MappingFlags::GLOBAL,
+        )
+        .unwrap();
+
+    let page_info_table: &[crate::memory::PageInfo] = unsafe {
+        core::slice::from_raw_parts(page_info_table_address.as_ptr_of(), page_info_table_entries)
+    };
+
+    // Initialize page info table
+    for entry in page_info_table {
+        entry.reset();
     }
 
-    let test_r = 0xc0400000 as *mut u32;
-    let test_w = 0xc03ff000 as *mut u32;
+    *crate::memory::PAGE_INFO_TABLE.try_write().unwrap() = page_info_table;
+    crate::sync::lock_nb(&EARLY_ALLOCATOR).take();
+
+    // TEST
+    let test_r = 0xc0801000 as *mut u32;
+    let test_w = 0xc0800000 as *mut u32;
     kernel_address_space
         .map_page(
             kernel_address_space.top_layer(),
             VirtAddr::from_mut_ptr_of(test_r),
             PhysAddr::from_usize(0x800000),
             PageSize::Size4K,
-            crate::memory::MappingFlags::PRESENT | crate::memory::MappingFlags::READ,
+            MappingFlags::PRESENT | MappingFlags::READ,
         )
         .unwrap();
     kernel_address_space
@@ -116,7 +133,7 @@ pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
             VirtAddr::from_mut_ptr_of(test_w),
             PhysAddr::from_usize(0x800000),
             PageSize::Size4K,
-            crate::memory::MappingFlags::PRESENT | crate::memory::MappingFlags::WRITE,
+            MappingFlags::PRESENT | MappingFlags::WRITE,
         )
         .unwrap();
     crate::println!("Mapped!");
