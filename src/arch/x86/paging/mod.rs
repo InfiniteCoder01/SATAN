@@ -30,6 +30,12 @@ pub enum PageSize {
     Size1G = 0x40000000,
 }
 
+impl PageSize {
+    pub fn min() -> Self {
+        Self::Size4K
+    }
+}
+
 extern "C" {
     #[link_name = "kernel_top_level_page_table"]
     static mut KERNEL_TOP_LEVEL_PAGE_TABLE: PageTable;

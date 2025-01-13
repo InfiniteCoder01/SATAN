@@ -58,7 +58,7 @@ impl AddressSpaceTrait for AddressSpace {
     }
 
     fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer> {
-        let mut entry = Self::get_entry(&layer, vaddr);
+        let entry = Self::get_entry(&layer, vaddr);
 
         if entry.flags().contains(PTEFlags::P | PTEFlags::PS) {
             if map {
