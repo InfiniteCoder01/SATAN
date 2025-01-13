@@ -108,12 +108,25 @@ pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
     };
 
     // Initialize page info table
-    for entry in page_info_table {
+    let mut early_alloc = crate::sync::lock_nb(&EARLY_ALLOCATOR);
+    for (index, entry) in page_info_table.iter().enumerate() {
         entry.reset();
+        let addr = PhysAddr::from_usize(index * PageSize::min() as usize);
+        if addr < early_alloc.as_ref().unwrap().alloc_start {
+            entry.acquire();
+        } else if early_alloc
+            .as_ref()
+            .unwrap()
+            .next_possibly_free(addr, PageSize::min())
+            .is_some()
+        {
+            entry.acquire();
+        }
     }
 
     *crate::memory::PAGE_INFO_TABLE.try_write().unwrap() = page_info_table;
-    crate::sync::lock_nb(&EARLY_ALLOCATOR).take();
+    early_alloc.take();
+    drop(early_alloc);
 
     // TEST
     let test_r = 0xc0801000 as *mut u32;
