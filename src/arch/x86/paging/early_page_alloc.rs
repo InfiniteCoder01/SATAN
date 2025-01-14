@@ -108,6 +108,7 @@ pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
     };
 
     // Initialize page info table
+    // TODO: Speed up
     let mut early_alloc = crate::sync::lock_nb(&EARLY_ALLOCATOR);
     for (index, entry) in page_info_table.iter().enumerate() {
         entry.reset();
@@ -128,40 +129,32 @@ pub(super) fn setup_page_info_table(boot_info: &multiboot2::BootInformation) {
     early_alloc.take();
     drop(early_alloc);
 
+    // TODO: Free boot info and bootstrap code
+
     // TEST
-    let test_r = 0xc0801000 as *mut u32;
-    let test_w = 0xc0800000 as *mut u32;
-    kernel_address_space
-        .map_page(
-            kernel_address_space.top_layer(),
-            VirtAddr::from_mut_ptr_of(test_r),
-            PhysAddr::from_usize(0x800000),
-            PageSize::Size4K,
-            MappingFlags::PRESENT | MappingFlags::READ,
+    let test = 0xc0801000 as *mut u32;
+    let test = kernel_address_space
+        .map_alloc(
+            VirtAddr::from_mut_ptr_of(test),
+            PageSize::min() as _,
+            MappingFlags::PRESENT | MappingFlags::READ | MappingFlags::WRITE,
         )
-        .unwrap();
-    kernel_address_space
-        .map_page(
-            kernel_address_space.top_layer(),
-            VirtAddr::from_mut_ptr_of(test_w),
-            PhysAddr::from_usize(0x800000),
-            PageSize::Size4K,
-            MappingFlags::PRESENT | MappingFlags::WRITE,
-        )
-        .unwrap();
+        .unwrap()
+        .as_mut_ptr_of();
     crate::println!("Mapped!");
     unsafe {
-        *test_w = 42;
+        *test = 42;
     };
     crate::println!("Wrote!");
-    crate::println!("Testing page mapping: {}", unsafe { *test_r });
-    kernel_address_space
-        .unmap_page(
-            kernel_address_space.top_layer(),
-            VirtAddr::from_mut_ptr_of(test_r),
-            PageSize::Size4K,
-        )
-        .unwrap();
-    crate::println!("Testing page unmapping (you should see a page fault)...");
-    crate::println!("If you see this everything broke: {}", unsafe { *test_r });
+    crate::println!("Testing page mapping: {}", unsafe { *test });
+    kernel_address_space.unmap_free(VirtAddr::from_mut_ptr_of(test), PageSize::min() as _);
+    // kernel_address_space
+    //     .unmap_page(
+    //         kernel_address_space.top_layer(),
+    //         VirtAddr::from_mut_ptr_of(test_r),
+    //         PageSize::Size4K,
+    //     )
+    //     .unwrap();
+    // crate::println!("Testing page unmapping (you should see a page fault)...");
+    // crate::println!("If you see this everything broke: {}", unsafe { *test_r });
 }

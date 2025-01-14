@@ -32,14 +32,21 @@ impl PageInfo {
     }
 }
 
-pub static PAGE_INFO_TABLE: spin::RwLock<&[PageInfo]> = spin::RwLock::new(&[]);
+pub static PAGE_INFO_TABLE: crate::sync::RwLock<&[PageInfo]> = crate::sync::RwLock::new(&[]);
 
 /// Access the page info table
-pub fn page_info_table() -> spin::RwLockReadGuard<'static, &'static [PageInfo]> {
+pub fn page_info_table() -> crate::sync::RwLockReadGuard<'static, &'static [PageInfo]> {
     match PAGE_INFO_TABLE.try_read() {
         Some(guard) => guard,
         None => panic!("Tried to lock a locked mutex!"),
     }
+}
+
+/// Access page info from the table for a specific page
+pub fn page_info(page: PhysAddr) -> crate::sync::MappedRwLockReadGuard<'static, &'static PageInfo> {
+    crate::sync::RwLockReadGuard::map(page_info_table(), |page_info_table| {
+        &page_info_table[page.as_usize() / crate::arch::paging::PageSize::min() as usize]
+    })
 }
 
 /// Allocate page of size page_size aligned to page_size
