@@ -102,4 +102,25 @@ impl AddressSpaceTrait for AddressSpace {
         #[cfg(target_arch = "x86_64")]
         return (self.0, 39);
     }
+
+    /// Decrement reference count of all pages related to this one
+    fn free_page(&self, layer: &Self::Layer, vaddr: VirtAddr) -> MappingResult<()> {
+        let mut entry = Self::get_entry(&layer, vaddr);
+        if !entry.flags().contains(PTEFlags::P) {
+            return Ok(());
+        }
+
+        if !entry.flags().contains(PTEFlags::PS) && page_info(entry.address()).uses() {
+            for page in 0..Self::page_size(layer) / PageSize::min() as usize {
+                //
+            }
+        }
+        free_page(
+            entry.address(),
+            PageSize::from_usize(Self::page_size(layer)).unwrap(),
+        );
+        *entry = PTEntry::NULL;
+        flush_tlb(vaddr);
+        Ok(())
+    }
 }

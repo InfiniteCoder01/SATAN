@@ -80,6 +80,7 @@ pub trait AddressSpaceTrait {
 
     /// Map a single (possibly large/huge) page.
     /// As a layer should take [`AddressSpaceTrait::top_layer`]
+    /// DOES NOT increment reference count of the target page
     fn map_page(
         &self,
         layer: Self::Layer,
@@ -108,8 +109,12 @@ pub trait AddressSpaceTrait {
         }
     }
 
+    /// Decrement reference count of all pages related to this one
+    fn free_page(&self, layer: &Self::Layer, vaddr: VirtAddr) -> MappingResult<()>;
+
     /// Unmap a single (possibly large/huge) page or a whole page table of the same size.
     /// As a layer should take [`AddressSpaceTrait::top_layer`]
+    /// DOES decrement reference count of the target page
     fn unmap_page(
         &self,
         layer: Self::Layer,
@@ -121,6 +126,7 @@ pub trait AddressSpaceTrait {
         }
 
         if Self::page_size(&layer) == page_size as usize {
+            //
             Self::unset_entry(layer, vaddr, page_size)
         } else {
             self.unmap_page(Self::next_layer(layer, vaddr, false)?, vaddr, page_size)
@@ -153,18 +159,7 @@ pub trait AddressSpaceTrait {
         Ok(vaddr)
     }
 
-    /// Allocate and map a region of memory into
-    /// the address space. On success returns
-    /// actual address region has been mapped to.
-    /// vaddr must be a valid hint. Value is uninit
-    fn map_alloc_ty<T>(
-        &self,
-        vaddr: VirtAddr,
-        size: usize,
-        flags: MappingFlags,
-    ) -> MappingResult<&mut core::mem::MaybeUninit<T>> {
-        Ok(unsafe { &mut *self.map_alloc(vaddr, size, flags)?.as_mut_ptr_of() })
+    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()> {
+        todo!()
     }
-
-    // TODO: Unmap
 }

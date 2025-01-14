@@ -31,6 +31,19 @@ pub enum PageSize {
 }
 
 impl PageSize {
+    pub fn from_usize(size: usize) -> Option<Self> {
+        match size {
+            0x1000 => Some(Self::Size4K),
+            #[cfg(target_arch = "x86")]
+            0x400000 => Some(Self::Size4M),
+            #[cfg(target_arch = "x86_64")]
+            0x200000 => Some(Self::Size2M),
+            #[cfg(target_arch = "x86_64")]
+            0x40000000 => Some(Self::Size1G),
+            _ => None,
+        }
+    }
+
     pub fn min() -> Self {
         Self::Size4K
     }
