@@ -1,76 +1,16 @@
-use core::sync::atomic::Ordering;
 pub use memory_addr::{pa, va, va_range, MemoryAddr, PhysAddr, VirtAddr};
 
+/// Address space implementations
 pub mod address_space;
 pub use address_space::{AddressSpaceTrait, MappingError, MappingFlags, MappingResult};
 
-/// Kernel page info entry
-pub struct PageInfo {
-    pub uses: core::sync::atomic::AtomicU32,
-}
+/// Different page allocator implementaitons
+pub mod page_allocator;
+pub use page_allocator::PageAllocatorTrait;
 
-impl PageInfo {
-    /// Reset page info to an unused page
-    pub fn reset(&self) {
-        self.uses.store(0, Ordering::SeqCst);
-    }
-
-    // /// Add one to uses count
-    // pub fn r#use(&self) {
-    //     self.uses.fetch_add(1, Ordering::Relaxed);
-    // }
-
-    // /// Unuse this page, pass in it's address. Will free if rc goes to zero
-    // pub fn r#unuse(&self, addr: PhysAddr) {
-    //     self.uses.fetch_sub(1, Ordering::Relaxed);
-    // }
-
-    pub fn acquire(&self) -> bool {
-        self.uses
-            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-    }
-}
-
-pub static PAGE_INFO_TABLE: crate::sync::RwLock<&[PageInfo]> = crate::sync::RwLock::new(&[]);
-
-/// Access the page info table
-pub fn page_info_table() -> crate::sync::RwLockReadGuard<'static, &'static [PageInfo]> {
-    match PAGE_INFO_TABLE.try_read() {
-        Some(guard) => guard,
-        None => panic!("Tried to lock a locked mutex!"),
-    }
-}
-
-/// Access page info from the table for a specific page
-pub fn page_info(page: PhysAddr) -> crate::sync::MappedRwLockReadGuard<'static, &'static PageInfo> {
-    crate::sync::RwLockReadGuard::map(page_info_table(), |page_info_table| {
-        &page_info_table[page.as_usize() / crate::arch::paging::PageSize::min() as usize]
-    })
-}
-
-/// Allocate page of size page_size aligned to page_size
-pub fn alloc_page(page_size: crate::arch::paging::PageSize) -> PhysAddr {
-    let page_info_table = page_info_table();
-    if page_info_table.is_empty() {
-        crate::arch::paging::early_alloc_page(page_size)
-    } else {
-        for (index, page_info) in page_info_table.iter().enumerate() {
-            if page_info.acquire() {
-                return PhysAddr::from_usize(index * crate::arch::paging::PageSize::min() as usize);
-            }
-        }
-        todo!()
-    }
-}
-
-/// Free page allocated with [alloc_page]
-pub fn free_page(addr: PhysAddr, page_size: crate::arch::paging::PageSize) {
-    let page_info_table = page_info_table();
-    if page_info_table.is_empty() {
-        panic!("Can't free page without page info table");
-    }
-    todo!()
+/// Page size trait, implement for an enum (or a struct) that could hold valid page sizes
+pub trait PageSizeTrait: Copy + PartialEq + Eq + TryFrom<usize> + Into<usize> {
+    const MIN: Self;
 }
 
 /// Wrap a u64 in this struct to display it with size postfix (KiB, MiB, GiB, etc.)

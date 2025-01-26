@@ -4,12 +4,16 @@ pub mod x86;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub use x86 as current;
 
+// * Stub imports to make it easier to see required functions and types
+
 pub use current::{_panic, _print};
 
-pub mod interrupts {
-    pub use super::current::interrupts::{disable, enable};
+/// Instructions like cpuid
+pub mod instructions {
+    pub use super::current::instructions::cpu_id;
 }
 
-pub mod paging {
-    pub use super::current::paging::{early_alloc_page, AddressSpace, PageSize};
+/// Interrupt handling
+pub mod interrupts {
+    pub use super::current::interrupts::{disable, enable};
 }

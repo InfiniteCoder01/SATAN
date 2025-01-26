@@ -24,10 +24,13 @@ pub(super) fn map<T>(addr: PhysAddr) -> crate::sync::MappedLockGuard<T> {
     );
 
     crate::sync::LockGuard::map(TMP_PAGE_MUTEX.lock(), |_| {
+        let entry = PTEntry::new_page(addr, PageSize::Size4K, PTEFlags::P | PTEFlags::RW);
         unsafe {
-            *TMP_PAGE_ENTRY = PTEntry::new_page(addr, PageSize::Size4K, PTEFlags::P | PTEFlags::RW);
+            if *TMP_PAGE_ENTRY != entry {
+                *TMP_PAGE_ENTRY = entry;
+                flush_tlb(address());
+            }
         }
-        flush_tlb(address());
         unsafe { &mut *address().as_mut_ptr_of() }
     })
 }

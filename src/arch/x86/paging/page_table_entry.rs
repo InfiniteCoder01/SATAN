@@ -49,6 +49,32 @@ impl From<MappingFlags> for PTEFlags {
     }
 }
 
+impl From<PTEFlags> for MappingFlags {
+    fn from(value: PTEFlags) -> Self {
+        let mut flags = Self::empty();
+        if value.contains(PTEFlags::P) {
+            flags |= Self::PRESENT;
+        }
+        if value.contains(PTEFlags::RW) {
+            flags |= Self::WRITE;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if value.contains(todo!()) {
+            flags |= Self::EXECUTE;
+        }
+        if value.contains(PTEFlags::US) {
+            flags |= Self::USER;
+        }
+        if value.contains(PTEFlags::PCD) {
+            flags |= Self::UNCACHED;
+        }
+        if value.contains(PTEFlags::G) {
+            flags |= Self::GLOBAL;
+        }
+        flags
+    }
+}
+
 /// Page table entry
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]

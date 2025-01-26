@@ -1,9 +1,10 @@
-use memory_addr::{pa, va, va_range, MemoryAddr, PhysAddr, VirtAddr};
+use super::{PageAllocatorTrait, PageSizeTrait};
+use memory_addr::{MemoryAddr, PhysAddr, VirtAddr};
 
 bitflags::bitflags! {
     /// Generic page table entry flags that indicate the corresponding mapped
     /// memory region permissions and attributes.
-    #[derive(Clone, Copy, PartialEq)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct MappingFlags: usize {
         /// Memory is present. If not, generate a page fault
         const PRESENT       = 1 << 0;
@@ -28,6 +29,10 @@ pub enum MappingError {
     /// Mapping over an already existing page
     #[error("mapping over existing page at address {0:#x}")]
     MappingOver(PhysAddr),
+    /// Page allocation failed
+    #[error("page allocation failed")]
+    PageAllocationFailed,
+
     /// Mapping an unaligned address
     #[error("mapping an unaligned address {0:#x}")]
     UnalignedPhysicalAddress(PhysAddr),
@@ -45,93 +50,12 @@ pub enum MappingError {
 /// Result type for memory mapping operations
 pub type MappingResult<T> = Result<T, MappingError>;
 
-/// Trait to be implemented by an address space
-pub trait AddressSpaceTrait {
-    // * Mapping
-    /// Single page table
-    type Layer;
+pub mod nested_page_table;
 
-    /// Page size of one page
-    fn page_size(layer: &Self::Layer) -> usize;
-
-    /// Set an entry in the page table layer to map vaddr to paddr with size and flags
-    fn set_entry(
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        paddr: PhysAddr,
-        page_size: crate::arch::paging::PageSize,
-        flags: MappingFlags,
-    ) -> MappingResult<()>;
-
-    /// Unset an entry in the page table layer
-    fn unset_entry(
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        page_size: crate::arch::paging::PageSize,
-    ) -> MappingResult<()>;
-
-    /// Get or create (only if map is true) a page table layer in this layer
-    /// that is associated with this virtual address. map parameter indicates
-    /// if this call corresponds to mapping/unmapping operation
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer>;
-
-    /// Get top level page table layer for this address space
-    fn top_layer(&self) -> Self::Layer;
-
-    /// Map a single (possibly large/huge) page.
-    /// As a layer should take [`AddressSpaceTrait::top_layer`]
-    /// DOES NOT increment reference count of the target page
-    fn map_page(
-        &self,
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        paddr: PhysAddr,
-        page_size: crate::arch::paging::PageSize,
-        flags: MappingFlags,
-    ) -> MappingResult<()> {
-        if !vaddr.is_aligned(page_size as usize) {
-            return Err(MappingError::UnalignedVirtualAddress(vaddr));
-        }
-        if !paddr.is_aligned(page_size as usize) {
-            return Err(MappingError::UnalignedPhysicalAddress(paddr));
-        }
-
-        if Self::page_size(&layer) == page_size as usize {
-            Self::set_entry(layer, vaddr, paddr, page_size, flags)
-        } else {
-            self.map_page(
-                Self::next_layer(layer, vaddr, true)?,
-                vaddr,
-                paddr,
-                page_size,
-                flags,
-            )
-        }
-    }
-
-    /// Decrement reference count of all pages related to this one
-    fn free_page(&self, layer: &Self::Layer, vaddr: VirtAddr) -> MappingResult<()>;
-
-    /// Unmap a single (possibly large/huge) page or a whole page table of the same size.
-    /// As a layer should take [`AddressSpaceTrait::top_layer`]
-    /// DOES decrement reference count of the target page
-    fn unmap_page(
-        &self,
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        page_size: crate::arch::paging::PageSize,
-    ) -> MappingResult<()> {
-        if !vaddr.is_aligned(page_size as usize) {
-            return Err(MappingError::UnalignedVirtualAddress(vaddr));
-        }
-
-        if Self::page_size(&layer) == page_size as usize {
-            //
-            Self::unset_entry(layer, vaddr, page_size)
-        } else {
-            self.unmap_page(Self::next_layer(layer, vaddr, false)?, vaddr, page_size)
-        }
-    }
+/// Address space allows for control over accessible memory
+pub trait AddressSpaceTrait<PageSize: PageSizeTrait> {
+    // pub fn map(&mut self, vaddr: VirtAddr, paddr: PhysAddr, size: usize) -> MappingResult<VirtAddr>;
+    // pub fn unmap(&mut self, addr: VirtAddr, size: usize) -> MappingResult<()>;
 
     /// Allocate and map a region of memory into
     /// the address space. On success returns
@@ -142,24 +66,9 @@ pub trait AddressSpaceTrait {
         vaddr: VirtAddr,
         size: usize,
         flags: MappingFlags,
-    ) -> MappingResult<VirtAddr> {
-        // TODO: Bigger pages
-        let min_page = crate::arch::paging::PageSize::min();
-        debug_assert!(vaddr.is_aligned(min_page as usize));
-        debug_assert!(size % min_page as usize == 0);
-        for page in 0..size / min_page as usize {
-            self.map_page(
-                self.top_layer(),
-                vaddr + page * min_page as usize,
-                crate::memory::alloc_page(min_page),
-                min_page,
-                flags,
-            )?;
-        }
-        Ok(vaddr)
-    }
+        alloc: &impl PageAllocatorTrait<PageSize>,
+    ) -> MappingResult<VirtAddr>;
 
-    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()> {
-        todo!()
-    }
+    /// TODO: Doc
+    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()>;
 }
