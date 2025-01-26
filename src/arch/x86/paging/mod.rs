@@ -1,8 +1,11 @@
-pub use memory_addr::{pa, va, va_range, MemoryAddr, PhysAddr, VirtAddr};
+use memory_addr::{MemoryAddr, PhysAddr, VirtAddr};
 
 /// Temproary page, space for it is allocated after the kernel in the kernel address space.
 /// Used to map page tables and manipulate their entries
 mod tmp_page;
+
+mod page_size;
+pub use page_size::PageSize;
 
 /// Page table entry and it's flags
 mod page_table_entry;
@@ -12,42 +15,8 @@ use page_table_entry::{PTEFlags, PTEntry};
 mod address_space;
 pub use address_space::AddressSpace;
 
-/// Page allocator manages free pages
-mod early_page_alloc;
-pub use early_page_alloc::early_alloc_page;
-
-/// Page sizes possible to map
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(usize)]
-pub enum PageSize {
-    #[default]
-    Size4K = 0x1000,
-    #[cfg(target_arch = "x86")]
-    Size4M = 0x400000,
-    #[cfg(target_arch = "x86_64")]
-    Size2M = 0x200000,
-    #[cfg(target_arch = "x86_64")]
-    Size1G = 0x40000000,
-}
-
-impl PageSize {
-    pub fn from_usize(size: usize) -> Option<Self> {
-        match size {
-            0x1000 => Some(Self::Size4K),
-            #[cfg(target_arch = "x86")]
-            0x400000 => Some(Self::Size4M),
-            #[cfg(target_arch = "x86_64")]
-            0x200000 => Some(Self::Size2M),
-            #[cfg(target_arch = "x86_64")]
-            0x40000000 => Some(Self::Size1G),
-            _ => None,
-        }
-    }
-
-    pub fn min() -> Self {
-        Self::Size4K
-    }
-}
+/// Use standard zone-based page allocator
+pub type PageAllocator = crate::memory::page_allocator::ZonedBuddy<0x1000>;
 
 extern "C" {
     #[link_name = "kernel_top_level_page_table"]
@@ -56,6 +25,7 @@ extern "C" {
 
 linker_symbol! {
     kernel_offset(KERNEL_OFFSET_SYMBOL) => "KERNEL_OFFSET";
+    kernel_reserved_end(KERNEL_RESERVED_END) => "kernel_reserved_end";
 }
 
 /// Convert a physical address in the kernel address space to virtual by adding the offset
@@ -105,7 +75,57 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
         );
     }
 
-    early_page_alloc::setup_page_info_table(boot_info);
+    let page_allocator = PageAllocator::new();
+    let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
+    let kernel_address_space = AddressSpace::from_paddr(kernel_virt2phys(kernel_address_space));
+
+    // TODO: Properly add zones and avoid adding kernel
+    page_allocator
+        .add_zone(kernel_virt2phys(kernel_reserved_end()).as_usize(), 0x16000)
+        .unwrap();
+
+    // Add zones to the page allocator
+    let memory_map_tag = boot_info
+        .memory_map_tag()
+        .expect("Memory map not available");
+    for region in memory_map_tag.memory_areas() {
+        use multiboot2::MemoryAreaType;
+        let typ = MemoryAreaType::from(region.typ());
+        if typ == MemoryAreaType::Available {
+            // if page_allocator
+            //     .add_zone(
+            //         region.start_address() as _,
+            //         memory_addr::align_down_4k(region.size() as _),
+            //     )
+            //     .is_err()
+            // {
+            //     crate::println!("Failed to add some memory zones");
+            // }
+        }
+    }
+
+    // TODO: Free boot info and bootstrap code
+
+    // TEST
+    use crate::memory::MappingFlags;
+    use crate::memory::{AddressSpaceTrait, PageSizeTrait};
+    let test = 0xc0801000 as *mut u32;
+    let test = kernel_address_space
+        .map_alloc(
+            VirtAddr::from_mut_ptr_of(test),
+            PageSize::MIN as _,
+            MappingFlags::PRESENT | MappingFlags::READ | MappingFlags::WRITE,
+            &page_allocator,
+        )
+        .unwrap()
+        .as_mut_ptr_of();
+    crate::println!("Mapped!");
+    unsafe {
+        *test = 42;
+    };
+    crate::println!("Wrote!");
+    crate::println!("Testing page mapping: {}", unsafe { *test });
+    // kernel_address_space.unmap_free(VirtAddr::from_mut_ptr_of(test), PageSize::min() as _);
 }
 
 macro_rules! linker_symbol {

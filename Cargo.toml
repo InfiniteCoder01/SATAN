@@ -17,13 +17,15 @@ panic ="abort"
 
 [dependencies]
 thiserror = { version = "2.0.9", default-features = false }
+lock_api = "0.4.12"
 spin = "0.9.8"
 
 bitfield-struct = "0.10.0"
 bitflags = "2.6.0"
 
 memory_addr = "0.3.1"
-lock_api = "0.4.12"
+lock_free_buddy_allocator = "0.1.0"
+talc = "4.4.2"
 
 [target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dependencies]
 multiboot2 = { version = "0.23.1", default-features = false }
