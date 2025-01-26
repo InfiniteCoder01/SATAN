@@ -38,20 +38,11 @@ pub trait NestedPageTableLevel: Clone + Sized {
         alloc: &impl PageAllocatorTrait<Self::PageSize>,
     ) -> MappingResult<()> {
         if self.page_size() == Some(page_size) {
-            crate::println!(
-                "Mapping {vaddr:?} to {paddr:?} with flags {:#b}",
-                flags.bits()
-            );
             self.set_entry(vaddr, PageTableEntry::Page(paddr, flags))
         } else {
             let entry = self.get_entry(vaddr)?;
             let next_level = match entry {
                 PageTableEntry::Page(addr, flags) => {
-                    crate::println!(
-                        "Going into a page entry w/ addr {:?} and flags {:#x}",
-                        addr,
-                        flags.bits()
-                    );
                     if flags.contains(MappingFlags::PRESENT) {
                         return Err(MappingError::MappingOver(addr));
                     }
@@ -61,13 +52,7 @@ pub trait NestedPageTableLevel: Clone + Sized {
                     self.set_entry(vaddr, PageTableEntry::Level(level.clone()))?;
                     level
                 }
-                PageTableEntry::Level(level) => {
-                    // crate::println!(
-                    //     "Going into a level with page size {:?}",
-                    //     level.page_size().map(|v| v.into())
-                    // );
-                    level
-                }
+                PageTableEntry::Level(level) => level,
             };
             next_level.map_page(vaddr, paddr, page_size, flags, alloc)
         }
