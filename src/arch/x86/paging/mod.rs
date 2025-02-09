@@ -125,7 +125,11 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
     };
     crate::println!("Wrote!");
     crate::println!("Testing page mapping: {}", unsafe { *test });
-    // kernel_address_space.unmap_free(VirtAddr::from_mut_ptr_of(test), PageSize::min() as _);
+    kernel_address_space
+        .unmap_free(VirtAddr::from_mut_ptr_of(test), 4096)
+        .unwrap();
+    crate::println!("Testing page unmapping (You should see a page fault):");
+    crate::println!("Huh? {}", unsafe { *test });
 }
 
 macro_rules! linker_symbol {

@@ -1,3 +1,5 @@
+use core::alloc::AllocError;
+
 use super::{PageAllocatorTrait, PageSizeTrait, PhysAddr};
 use crate::sync::RwLock;
 
@@ -33,7 +35,7 @@ impl<const BLOCK_SIZE: usize> ZonedBuddy<BLOCK_SIZE> {
         }
     }
 
-    pub fn add_zone(&self, start: usize, size: usize) -> Result<(), ()> {
+    pub fn add_zone(&self, start: usize, size: usize) -> Result<(), AllocError> {
         debug_assert!(
             start % BLOCK_SIZE == 0,
             "zone is not aligned ({:#x})",
@@ -59,7 +61,7 @@ impl<const BLOCK_SIZE: usize> ZonedBuddy<BLOCK_SIZE> {
                     size / BLOCK_SIZE,
                     &alloc::alloc::Global,
                 )
-                .ok_or(())?,
+                .ok_or(AllocError)?,
             });
         }
         Ok(())
@@ -83,6 +85,12 @@ impl<const BLOCK_SIZE: usize> ZonedBuddy<BLOCK_SIZE> {
                 zone.buddy.free(allocation.as_usize(), blocks);
             }
         }
+    }
+}
+
+impl<const BLOCK_SIZE: usize> Default for ZonedBuddy<BLOCK_SIZE> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
