@@ -138,8 +138,8 @@ impl NestedPageTable for AddressSpace {
 impl NestedPageTableLevel for PageTableLevel {
     type PageSize = PageSize;
 
-    fn page_size(&self) -> Option<Self::PageSize> {
-        PageSize::try_from(1 << self.1).ok()
+    fn region_size(&self) -> usize {
+        1 << self.1
     }
 
     fn new_sublevel(&self, alloc: &impl PageAllocatorTrait<Self::PageSize>) -> Option<Self> {

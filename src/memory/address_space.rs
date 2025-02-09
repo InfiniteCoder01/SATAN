@@ -1,5 +1,5 @@
 use super::{PageAllocatorTrait, PageSizeTrait};
-use memory_addr::{MemoryAddr, PhysAddr, VirtAddr};
+use memory_addr::{PhysAddr, VirtAddr};
 
 bitflags::bitflags! {
     /// Generic page table entry flags that indicate the corresponding mapped
@@ -69,6 +69,6 @@ pub trait AddressSpaceTrait<PageSize: PageSizeTrait> {
         alloc: &impl PageAllocatorTrait<PageSize>,
     ) -> MappingResult<VirtAddr>;
 
-    /// TODO: Doc
+    /// Unmap a region of memory from the address space and mark it as free
     fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()>;
 }

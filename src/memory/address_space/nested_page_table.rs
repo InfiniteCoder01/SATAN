@@ -1,3 +1,5 @@
+use memory_addr::MemoryAddr;
+
 use super::{MappingError, MappingFlags, MappingResult};
 use super::{PageAllocatorTrait, PageSizeTrait};
 use super::{PhysAddr, VirtAddr};
@@ -10,13 +12,24 @@ pub enum PageTableEntry<Level: NestedPageTableLevel> {
     Page(PhysAddr, MappingFlags),
 }
 
+impl<Level: NestedPageTableLevel> PageTableEntry<Level> {
+    const NULL: Self = Self::Page(PhysAddr::from_usize(0), MappingFlags::empty());
+}
+
 /// A single level of a nested page table
 /// (underlying type should be something like a pointer that's freely cloneable)
 pub trait NestedPageTableLevel: Clone + Sized {
     type PageSize: PageSizeTrait;
 
+    /// Get the size of a page/page table of this layer, similar to page_size, but
+    /// returns the memory region that a sub-level page table manages if page can't
+    /// be mapped here
+    fn region_size(&self) -> usize;
+
     /// Get page size of this layer, if a page can be mapped here
-    fn page_size(&self) -> Option<Self::PageSize>;
+    fn page_size(&self) -> Option<Self::PageSize> {
+        self.region_size().try_into().ok()
+    }
 
     /// Allocate a new page table level, that's gonna come after this one
     fn new_sublevel(&self, alloc: &impl PageAllocatorTrait<Self::PageSize>) -> Option<Self>;
@@ -56,6 +69,44 @@ pub trait NestedPageTableLevel: Clone + Sized {
             };
             next_level.map_page(vaddr, paddr, page_size, flags, alloc)
         }
+    }
+
+    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()> {
+        let region_size = self.region_size();
+        let start = vaddr.align_down(region_size);
+        let end = (vaddr + size).align_up(region_size);
+        for page in (start.as_usize()..end.as_usize()).step_by(region_size) {
+            let page = VirtAddr::from(page);
+            let entry = self.get_entry(page)?;
+            if page < vaddr || page + region_size > vaddr + size {
+                match entry {
+                    PageTableEntry::Level(level) => {
+                        if page < vaddr {
+                            level.unmap_free(vaddr, page + region_size - vaddr)?;
+                        } else {
+                            level.unmap_free(page, vaddr + size - page)?;
+                        }
+                    }
+                    PageTableEntry::Page(paddr, flags) => {
+                        if flags.contains(MappingFlags::PRESENT) {
+                            return Err(MappingError::UnmappingPartOfLargePage(paddr));
+                        }
+                    }
+                }
+            } else {
+                match entry {
+                    PageTableEntry::Level(level) => {
+                        level.unmap_free(page, region_size)?;
+                    }
+                    PageTableEntry::Page(_, flags) => {
+                        if flags.contains(MappingFlags::PRESENT) {
+                            self.set_entry(page, PageTableEntry::NULL)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -115,7 +166,6 @@ pub trait NestedPageTable {
 
     /// Implementation of [`super::AddressSpaceTrait::unmap_free`]
     fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()> {
-        todo!();
-        Ok(())
+        self.top_level().unmap_free(vaddr, size)
     }
 }
