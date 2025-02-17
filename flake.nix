@@ -18,7 +18,7 @@
         {
           devShell = pkgs.mkShell {
             buildInputs = with pkgs; [
-              qemu
+              qemu bochs
               libisoburn mtools
               pkgs-crosssystem.buildPackages.grub2
               pkgs-crosssystem.buildPackages.gcc

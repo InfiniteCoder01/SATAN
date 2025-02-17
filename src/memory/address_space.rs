@@ -70,5 +70,10 @@ pub trait AddressSpaceTrait<PageSize: PageSizeTrait> {
     ) -> MappingResult<VirtAddr>;
 
     /// Unmap a region of memory from the address space and mark it as free
-    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()>;
+    fn unmap_free(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        alloc: &impl PageAllocatorTrait<PageSize>,
+    ) -> MappingResult<()>;
 }

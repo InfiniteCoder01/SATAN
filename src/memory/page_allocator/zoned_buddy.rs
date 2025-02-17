@@ -1,4 +1,5 @@
 use core::alloc::AllocError;
+use core::sync::atomic::AtomicUsize;
 
 use super::{PageAllocatorTrait, PageSizeTrait, PhysAddr};
 use crate::sync::RwLock;
@@ -13,6 +14,7 @@ impl lock_free_buddy_allocator::cpuid::Cpu for CpuId {
 struct Zone<const PAGE_SIZE: usize> {
     start: usize,
     size: usize,
+    allocated: AtomicUsize,
     buddy: lock_free_buddy_allocator::buddy_alloc::BuddyAlloc<
         'static,
         PAGE_SIZE,
@@ -56,6 +58,7 @@ impl<const BLOCK_SIZE: usize> ZonedBuddy<BLOCK_SIZE> {
             self.zones.write().push(Zone {
                 start,
                 size,
+                allocated: AtomicUsize::new(0),
                 buddy: lock_free_buddy_allocator::buddy_alloc::BuddyAlloc::new(
                     start,
                     size / BLOCK_SIZE,
@@ -67,24 +70,44 @@ impl<const BLOCK_SIZE: usize> ZonedBuddy<BLOCK_SIZE> {
         Ok(())
     }
 
-    fn alloc(&self, size: usize) -> Option<PhysAddr> {
+    pub fn alloc(&self, size: usize) -> Option<PhysAddr> {
         let blocks = size / BLOCK_SIZE;
         for zone in self.zones.read().iter() {
             if let Some(addr) = zone.buddy.alloc(blocks) {
+                zone.allocated
+                    .fetch_add(size, core::sync::atomic::Ordering::SeqCst);
                 return Some(PhysAddr::from_usize(addr));
             }
         }
         None
     }
 
-    fn free(&self, allocation: PhysAddr, size: usize) {
+    pub fn free(&self, allocation: PhysAddr, size: usize) {
         let start = allocation.as_usize();
         let blocks = size / BLOCK_SIZE;
         for zone in self.zones.read().iter() {
-            if start > zone.start && start + size < zone.start + zone.size {
+            if start >= zone.start && start + size <= zone.start + zone.size {
                 zone.buddy.free(allocation.as_usize(), blocks);
+                zone.allocated
+                    .fetch_sub(size, core::sync::atomic::Ordering::SeqCst);
             }
         }
+    }
+
+    /// Returns total amount of memory managed by the allocator.
+    /// To get free space, use [`Self::total_memory`] - [`Self::allocated_memory`]
+    pub fn total_memory(&self) -> usize {
+        self.zones
+            .read()
+            .iter()
+            .fold(0, |acc, zone| acc + zone.size)
+    }
+
+    /// Returns the amount of allocated memory
+    pub fn allocated_memory(&self) -> usize {
+        self.zones.read().iter().fold(0, |acc, zone| {
+            acc + zone.allocated.load(core::sync::atomic::Ordering::SeqCst)
+        })
     }
 }
 

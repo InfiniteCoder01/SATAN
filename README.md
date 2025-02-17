@@ -9,3 +9,8 @@ Then, run the build script by issuing `./build.sh`
 | x86 (i486) |     Works     |                      |
 | x86 (i386) |  Unsupported  |     TLB flushing     |
 |   x86_64   |     TODO      |                      |
+
+## Help!!!
+Here are some things you could help with:
+- Find a way to make freeing in ZonedBuddy page allocator checked (you can free a random page rigth now and it won't even panic)
+- Find a way to also check freeing in NestedPageTable

@@ -11,6 +11,8 @@ SECTIONS {
 		*(.bootstrap)
 	}
 
+	kernel_bootstrap_end = .;
+
 	. += KERNEL_OFFSET;
 	
 	/* Read-only code */
@@ -23,6 +25,7 @@ SECTIONS {
 	/* Read-only data, page aligned to allow use of the no-execute feature */
 	.rodata ALIGN (4K) : AT (ADDR (.rodata) - KERNEL_OFFSET) {
 		*(.rodata .rodata.*)
+		*(.got .got.*)
 	}
 		
 	/* Read-write data, page aligned for the .padata section */
@@ -40,6 +43,5 @@ SECTIONS {
 	kernel_tmp_page_address = ALIGN(4K);
 
 	/* Add a symbol that indicates the end address of the space reserved for kernel. */
-	kernel_reserved_end = kernel_tmp_page_address + 4096;
-
+	kernel_reserved_end = kernel_tmp_page_address + 4K;
 }

@@ -14,6 +14,17 @@ pub enum PageTableEntry<Level: NestedPageTableLevel> {
 
 impl<Level: NestedPageTableLevel> PageTableEntry<Level> {
     const NULL: Self = Self::Page(PhysAddr::from_usize(0), MappingFlags::empty());
+
+    /// Returns true if the page entry is mapped to somewhere (maybe even swapped), false
+    /// if it is free
+    pub fn mapped(&self) -> bool {
+        match self {
+            PageTableEntry::Level(_) => true,
+            PageTableEntry::Page(phys_addr, mapping_flags) => {
+                mapping_flags.contains(MappingFlags::PRESENT) || phys_addr.as_usize() != 0
+            }
+        }
+    }
 }
 
 /// A single level of a nested page table
@@ -33,6 +44,14 @@ pub trait NestedPageTableLevel: Clone + Sized {
 
     /// Allocate a new page table level, that's gonna come after this one
     fn new_sublevel(&self, alloc: &impl PageAllocatorTrait<Self::PageSize>) -> Option<Self>;
+
+    /// Free a page table level, that was a part of this page table. All it's sublevels
+    /// were already freed
+    fn free_sublevel(
+        &self,
+        sublevel: Self,
+        alloc: &impl PageAllocatorTrait<Self::PageSize>,
+    ) -> MappingResult<()>;
 
     /// Set an entry in this level. vaddr might not be aligned if entry
     /// is [`PageTableEntry::Level`]
@@ -71,7 +90,12 @@ pub trait NestedPageTableLevel: Clone + Sized {
         }
     }
 
-    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()> {
+    fn unmap_free(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        alloc: &impl PageAllocatorTrait<Self::PageSize>,
+    ) -> MappingResult<()> {
         let region_size = self.region_size();
         let start = vaddr.align_down(region_size);
         let end = (vaddr + size).align_up(region_size);
@@ -82,9 +106,23 @@ pub trait NestedPageTableLevel: Clone + Sized {
                 match entry {
                     PageTableEntry::Level(level) => {
                         if page < vaddr {
-                            level.unmap_free(vaddr, page + region_size - vaddr)?;
+                            level.unmap_free(vaddr, page + region_size - vaddr, alloc)?;
                         } else {
-                            level.unmap_free(page, vaddr + size - page)?;
+                            level.unmap_free(page, vaddr + size - page, alloc)?;
+                        }
+                        let mut mapped = false;
+                        for entry_addr in (page.as_usize()..page.as_usize() + region_size)
+                            .step_by(level.region_size())
+                        {
+                            let entry = level.get_entry(entry_addr.into())?;
+                            if entry.mapped() {
+                                mapped = true;
+                                break;
+                            }
+                        }
+                        if !mapped {
+                            self.free_sublevel(level, alloc)?;
+                            self.set_entry(page, PageTableEntry::NULL)?;
                         }
                     }
                     PageTableEntry::Page(paddr, flags) => {
@@ -96,10 +134,13 @@ pub trait NestedPageTableLevel: Clone + Sized {
             } else {
                 match entry {
                     PageTableEntry::Level(level) => {
-                        level.unmap_free(page, region_size)?;
+                        level.unmap_free(page, region_size, alloc)?;
+                        self.free_sublevel(level, alloc)?;
+                        self.set_entry(page, PageTableEntry::NULL)?;
                     }
-                    PageTableEntry::Page(_, flags) => {
+                    PageTableEntry::Page(paddr, flags) => {
                         if flags.contains(MappingFlags::PRESENT) {
+                            alloc.free(paddr, self.page_size().unwrap());
                             self.set_entry(page, PageTableEntry::NULL)?;
                         }
                     }
@@ -121,27 +162,6 @@ pub trait NestedPageTable {
 
     /// Get top level page table for this address space
     fn top_level(&self) -> Self::Level;
-
-    // /// Unmap a single (possibly large/huge) page or a whole page table of the same size.
-    // /// As a layer should take [`AddressSpaceTrait::top_layer`]
-    // /// DOES NOT FREE
-    // fn unmap_page(
-    //     &self,
-    //     layer: Self::Layer,
-    //     vaddr: VirtAddr,
-    //     page_size: PageSize,
-    //     alloc: &impl PageAllocatorTrait<PageSize>,
-    // ) -> MappingResult<()> {
-    //     if !vaddr.is_aligned(page_size.clone()) {
-    //         return Err(MappingError::UnalignedVirtualAddress(vaddr));
-    //     }
-
-    //     if Self::page_size(&layer) == page_size.clone().into() {
-    //         Self::set_entry(layer, vaddr, page_size)
-    //     } else {
-    //         self.unmap_page(Self::next_layer(layer, vaddr, None)?, vaddr, page_size)
-    //     }
-    // }
 
     /// Implementation of [`super::AddressSpaceTrait::map_alloc`]
     fn map_alloc(
@@ -165,7 +185,12 @@ pub trait NestedPageTable {
     }
 
     /// Implementation of [`super::AddressSpaceTrait::unmap_free`]
-    fn unmap_free(&self, vaddr: VirtAddr, size: usize) -> MappingResult<()> {
-        self.top_level().unmap_free(vaddr, size)
+    fn unmap_free(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        alloc: &impl PageAllocatorTrait<Self::PageSize>,
+    ) -> MappingResult<()> {
+        self.top_level().unmap_free(vaddr, size, alloc)
     }
 }

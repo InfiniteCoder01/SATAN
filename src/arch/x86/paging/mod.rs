@@ -64,17 +64,6 @@ fn flush_tlb(address: VirtAddr) {
 
 /// Setup paging
 pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
-    // Enable PSE
-    unsafe {
-        core::arch::asm!(
-            "mov %cr4, {tmp}",
-            "or $0x10, {tmp}",
-            "mov {tmp}, %cr4",
-            tmp = out(reg) _,
-            options(att_syntax)
-        );
-    }
-
     let page_allocator = PageAllocator::new();
     let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
     let kernel_address_space = AddressSpace::from_paddr(kernel_virt2phys(kernel_address_space));
@@ -84,29 +73,30 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
         .add_zone(kernel_virt2phys(kernel_reserved_end()).as_usize(), 0x16000)
         .unwrap();
 
-    // Add zones to the page allocator
-    let memory_map_tag = boot_info
-        .memory_map_tag()
-        .expect("Memory map not available");
-    for region in memory_map_tag.memory_areas() {
-        use multiboot2::MemoryAreaType;
-        let typ = MemoryAreaType::from(region.typ());
-        if typ == MemoryAreaType::Available {
-            // if page_allocator
-            //     .add_zone(
-            //         region.start_address() as _,
-            //         memory_addr::align_down_4k(region.size() as _),
-            //     )
-            //     .is_err()
-            // {
-            //     crate::println!("Failed to add some memory zones");
-            // }
-        }
-    }
+    // // Add zones to the page allocator
+    // let memory_map_tag = boot_info
+    //     .memory_map_tag()
+    //     .expect("Memory map not available");
+    // for region in memory_map_tag.memory_areas() {
+    //     use multiboot2::MemoryAreaType;
+    //     let typ = MemoryAreaType::from(region.typ());
+    //     if typ == MemoryAreaType::Available {
+    //         // if page_allocator
+    //         //     .add_zone(
+    //         //         region.start_address() as _,
+    //         //         memory_addr::align_down_4k(region.size() as _),
+    //         //     )
+    //         //     .is_err()
+    //         // {
+    //         //     crate::println!("Failed to add some memory zones");
+    //         // }
+    //     }
+    // }
 
     // TODO: Free boot info and bootstrap code
 
     // TEST
+    crate::println!("Total memory: {}", page_allocator.total_memory());
     use crate::memory::MappingFlags;
     use crate::memory::{AddressSpaceTrait, PageSizeTrait};
     let test = 0xc0801000 as *mut u32;
@@ -120,14 +110,19 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
         .unwrap()
         .as_mut_ptr_of();
     crate::println!("Mapped!");
+    crate::println!("Allocated memory: {}", page_allocator.allocated_memory());
     unsafe {
         *test = 42;
     };
     crate::println!("Wrote!");
     crate::println!("Testing page mapping: {}", unsafe { *test });
     kernel_address_space
-        .unmap_free(VirtAddr::from_mut_ptr_of(test), 4096)
+        .unmap_free(VirtAddr::from_mut_ptr_of(test), 4096, &page_allocator)
         .unwrap();
+    crate::println!(
+        "Allocated memory after freeing: {}",
+        page_allocator.allocated_memory()
+    );
     crate::println!("Testing page unmapping (You should see a page fault):");
     crate::println!("Huh? {}", unsafe { *test });
 }
