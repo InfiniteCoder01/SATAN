@@ -2,8 +2,9 @@
 
 # If this is not your path, kindly change it
 export CROSS_CC="${CROSS_CC:-$HOME/opt/cross/bin/i686-elf-gcc}"
-export ARCH=x86/x32
-export QEMU_SYSTEM=i386
+export ARCH="${ARCH:-x86/x32}"
+export QEMU_SYSTEM="${QEMU_SYSTEM:-i386}"
+export EMULATOR="${EMULATOR:-qemu}"
 
 # Colors
 if command -v tput &> /dev/null; then
@@ -27,7 +28,7 @@ fi
 # Utils
 build() {
 	if ! cargo build; then
-		return -1
+		return 1
 	fi
 
 	KERNEL="target/target/debug/satan"
@@ -44,12 +45,20 @@ build() {
 }
 
 run() {
-	qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso
+	if [ $EMULATOR = "bochs" ]; then
+		bochs -q
+	else
+		qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso
+	fi
 }
 
 debug() {
-	qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso -s -S &
-	rust-gdb target/target/debug/satan -x gdbinit
+	if [ $EMULATOR = "bochs" ]; then
+		bochs -q
+	else
+		qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso -s -S &
+		rust-gdb target/target/debug/satan -x gdbinit
+	fi
 }
 
 clean() {

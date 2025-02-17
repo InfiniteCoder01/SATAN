@@ -68,7 +68,8 @@ kernel_top_level_page_table:
     .fill 1024, 4, 0
 kernel_page_table_bootstrap:
     .fill 1024, 4, 0
-kernel_page_table1_higher_half:
+kernel_page_tables_higher_half:
+    .fill 1024, 4, 0
     .fill 1024, 4, 0
 
 .global kernel_tmp_page_entry_address
@@ -77,10 +78,10 @@ kernel_tmp_page_entry_address:
 
 .section .stack, "aw"
 bootstrap_stack:
-    .skip 16384
+    .skip 0x4000
 bootstrap_stack_top:
 tss_stack:
-    .skip 16384
+    .skip 0x4000
 tss_stack_top:
 
 .section .bootstrap, "ax"
@@ -102,6 +103,7 @@ mmap:
     jb mmap
     ret
 
+.extern kernel_bootstrap_end
 .extern kernel_start
 .extern data_start
 .extern kernel_end
@@ -147,11 +149,35 @@ after_gdt:
     or $0b00000011, %eax
     mov %eax, kernel_top_level_page_table - KERNEL_OFFSET
 
-    # Map first page table (4MB) in the higher half of the address space
-    mov $kernel_page_table1_higher_half - KERNEL_OFFSET, %eax
-    or $0b00000011, %eax
-    mov %eax, kernel_top_level_page_table - KERNEL_OFFSET + KERNEL_OFFSET / 0x400000 * 4
+    # Map some more of lower pages
+    mov $0x400000, %esi
+    mov $kernel_top_level_page_table - KERNEL_OFFSET + 4, %edi
 
+map_lower.loop:
+    mov %esi, %eax
+    or $0b10000011, %eax
+    mov %eax, (%edi)
+
+    add $0x400000, %esi
+    add $4, %edi
+    cmp $0x800000, %esi
+    ja map_lower.loop
+
+    # Map first 2 page tables into the higher half of the address space
+    mov $kernel_page_tables_higher_half - KERNEL_OFFSET, %eax
+    or $0b00000011, %eax
+    mov $kernel_top_level_page_table - KERNEL_OFFSET + KERNEL_OFFSET / 0x400000 * 4, %ebx
+    mov %eax, (%ebx)
+
+    add $0x1000, %eax
+    add $4, %ebx
+    mov %eax, (%ebx)
+
+    # Check if bootstrap fits
+    mov $0x400000, %eax
+    cmp $kernel_bootstrap_end, %eax
+    jb kernelBootstrapTooBig
+    
     mov $0, %esi         # Start address
     mov $0x100000, %eax  # End address
     mov $kernel_page_table_bootstrap - KERNEL_OFFSET, %edi # Page table address
@@ -162,7 +188,7 @@ after_gdt:
     call mmap
 
     # Check if kernel fits
-    mov $KERNEL_OFFSET + 0x400000, %eax
+    mov $KERNEL_OFFSET + 0x800000, %eax
     cmp $kernel_reserved_end, %eax
     jb kernelTooBig
     
@@ -171,7 +197,7 @@ after_gdt:
     # Compute offset into page table
     mov $kernel_start - KERNEL_OFFSET, %edi
     shr $10, %edi
-    add $kernel_page_table1_higher_half - KERNEL_OFFSET, %edi # Add to the page table address
+    add $kernel_page_tables_higher_half - KERNEL_OFFSET, %edi # Add to the page table address
     mov $0b100000001, %ebx                     # Flags
     call mmap
     mov $kernel_end - KERNEL_OFFSET, %eax      # End address
@@ -181,8 +207,13 @@ after_gdt:
     # Setup tmp page
     mov $kernel_tmp_page_address - KERNEL_OFFSET, %edi
     shr $10, %edi
-    add $kernel_page_table1_higher_half, %edi # Add to the page table address
+    add $kernel_page_tables_higher_half, %edi # Add to the page table address
     mov %edi, kernel_tmp_page_entry_address - KERNEL_OFFSET
+
+    # Enable PSE
+    mov %cr4, %eax
+    or $0x10, %eax
+    mov %eax, %cr4
 
     # Enable paging
     mov $kernel_top_level_page_table - KERNEL_OFFSET, %eax
@@ -217,5 +248,32 @@ kernelTooBig:
     movw $'i' | 0x0400, 0xb8018
     movw $'g' | 0x0400, 0xb801a
     movw $'!' | 0x0400, 0xb801c
+    jmp kernelTooBig.loop
+kernelBootstrapTooBig:
+    movw $'K' | 0x0400, 0xb8000
+    movw $'e' | 0x0400, 0xb8002
+    movw $'r' | 0x0400, 0xb8004
+    movw $'n' | 0x0400, 0xb8006
+    movw $'e' | 0x0400, 0xb8008
+    movw $'l' | 0x0400, 0xb800a
+    movw $' ' | 0x0400, 0xb800c
+    movw $'b' | 0x0400, 0xb800e
+    movw $'o' | 0x0400, 0xb8010
+    movw $'o' | 0x0400, 0xb8012
+    movw $'t' | 0x0400, 0xb8014
+    movw $'s' | 0x0400, 0xb8016
+    movw $'t' | 0x0400, 0xb8018
+    movw $'r' | 0x0400, 0xb801a
+    movw $'a' | 0x0400, 0xb801c
+    movw $'p' | 0x0400, 0xb801e
+    movw $' ' | 0x0400, 0xb8020
+    movw $'t' | 0x0400, 0xb8022
+    movw $'o' | 0x0400, 0xb8024
+    movw $'o' | 0x0400, 0xb8026
+    movw $' ' | 0x0400, 0xb8028
+    movw $'b' | 0x0400, 0xb802a
+    movw $'i' | 0x0400, 0xb802c
+    movw $'g' | 0x0400, 0xb802e
+    movw $'!' | 0x0400, 0xb8030
 kernelTooBig.loop:
     jmp kernelTooBig.loop

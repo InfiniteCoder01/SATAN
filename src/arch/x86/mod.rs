@@ -33,7 +33,9 @@ mod allocator {
 /// after assembly bootstrap setus up GDT and higher-half address space
 #[no_mangle]
 pub extern "cdecl" fn ksetup(mb_magic: u32, mbi_ptr: u32) -> ! {
-    // loop {}
+    crate::println!("Hello, SATAN!");
+    interrupts::setup();
+
     let boot_info = if mb_magic == multiboot2::MAGIC {
         let boot_info = unsafe {
             multiboot2::BootInformation::load(mbi_ptr as *const multiboot2::BootInformationHeader)
@@ -52,8 +54,6 @@ pub extern "cdecl" fn ksetup(mb_magic: u32, mbi_ptr: u32) -> ! {
         );
     };
 
-    crate::println!("Hello, SATAN!");
-    interrupts::setup();
     paging::setup_paging(&boot_info);
 
     loop {}

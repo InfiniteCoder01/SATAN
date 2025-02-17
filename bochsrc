@@ -1,0 +1,3 @@
+ata0-slave: type=cdrom, path=bin/os.iso, status=inserted
+boot: cdrom
+magic_break: enabled=1
