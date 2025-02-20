@@ -41,7 +41,7 @@ impl PageTableLevel {
         let page_table = tmp_page::map::<super::PageTable>(self.0);
 
         let mask = super::PAGE_TABLE_ENTRIES - 1;
-        let index = vaddr.as_usize() >> self.1 & mask;
+        let index = (vaddr.as_usize() >> self.1) & mask;
         crate::sync::MappedLockGuard::map(page_table, |page_table| &mut page_table[index])
     }
 }

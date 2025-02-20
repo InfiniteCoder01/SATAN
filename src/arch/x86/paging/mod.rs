@@ -25,6 +25,7 @@ extern "C" {
 
 linker_symbol! {
     kernel_offset(KERNEL_OFFSET_SYMBOL) => "KERNEL_OFFSET";
+    kernel_end(KERNEL_END) => "kernel_end";
     kernel_reserved_end(KERNEL_RESERVED_END) => "kernel_reserved_end";
 }
 
@@ -68,30 +69,30 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
     let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
     let kernel_address_space = AddressSpace::from_paddr(kernel_virt2phys(kernel_address_space));
 
-    // TODO: Properly add zones and avoid adding kernel
-    page_allocator
-        .add_zone(kernel_virt2phys(kernel_reserved_end()).as_usize(), 0x16000)
-        .unwrap();
+    // Add zones to the page allocator
+    let memory_map_tag = boot_info
+        .memory_map_tag()
+        .expect("Memory map not available");
+    for region in memory_map_tag.memory_areas() {
+        use multiboot2::MemoryAreaType;
+        let typ = MemoryAreaType::from(region.typ());
+        if typ == MemoryAreaType::Available {
+            let kernel_physical_end = kernel_virt2phys(kernel_end());
+            let start = PhysAddr::from_usize(region.start_address() as _);
+            let start = start.max(kernel_physical_end).align_up_4k();
+            let end = PhysAddr::from_usize(region.end_address() as _);
+            if end <= start {
+                continue;
+            }
 
-    // // Add zones to the page allocator
-    // let memory_map_tag = boot_info
-    //     .memory_map_tag()
-    //     .expect("Memory map not available");
-    // for region in memory_map_tag.memory_areas() {
-    //     use multiboot2::MemoryAreaType;
-    //     let typ = MemoryAreaType::from(region.typ());
-    //     if typ == MemoryAreaType::Available {
-    //         // if page_allocator
-    //         //     .add_zone(
-    //         //         region.start_address() as _,
-    //         //         memory_addr::align_down_4k(region.size() as _),
-    //         //     )
-    //         //     .is_err()
-    //         // {
-    //         //     crate::println!("Failed to add some memory zones");
-    //         // }
-    //     }
-    // }
+            if page_allocator
+                .add_zone(start.as_usize(), memory_addr::align_down_4k(end - start))
+                .is_err()
+            {
+                crate::println!("Failed to add some memory zones");
+            }
+        }
+    }
 
     // TODO: Free boot info and bootstrap code
 

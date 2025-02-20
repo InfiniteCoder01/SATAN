@@ -20,6 +20,7 @@ mod allocator {
     const SIZE: usize = 0x1000;
     static mut ARENA: [u8; SIZE] = [0; SIZE];
 
+    // TODO: Use system allocator on OOM
     #[global_allocator]
     static ALLOCATOR: talc::Talck<spin::Mutex<()>, talc::ClaimOnOom> = talc::Talc::new(unsafe {
         // if we're in a hosted environment, the Rust runtime may allocate before
