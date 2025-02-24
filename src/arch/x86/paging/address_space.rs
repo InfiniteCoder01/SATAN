@@ -1,104 +1,150 @@
-use super::*;
+use memory_addr::{MemoryAddr, PhysAddr, VirtAddr};
+
+use super::tmp_page;
+use super::PageSize;
+/// Physical page table entry types
+mod entry {
+    pub(super) use super::super::{PTEFlags, PTEntry};
+}
+
+use crate::memory::address_space::nested_page_table::{NestedPageTable, NestedPageTableLevel};
+use crate::memory::address_space::AddressSpaceTrait;
+use crate::memory::{MappingError, MappingResult, PageAllocatorTrait};
+
+/// Interface page table entry types
+mod if_entry {
+    pub(super) use crate::memory::address_space::nested_page_table::PageTableEntry;
+    pub(super) use crate::memory::MappingFlags;
+}
 
 /// Address space struct
-pub struct AddressSpace(pub PhysAddr);
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AddressSpace(PageTableLevel);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PageTableLevel(PhysAddr, usize);
 
 impl AddressSpace {
-    /// Map the page table layer and get the page table entry associated with this address
-    fn get_entry(
-        layer: &<Self as AddressSpaceTrait>::Layer,
-        vaddr: VirtAddr,
-    ) -> crate::sync::MappedLockGuard<PTEntry> {
-        let page_table = tmp_page::map::<PageTable>(layer.0);
+    pub(super) fn from_paddr(addr: PhysAddr) -> Self {
+        #[cfg(target_arch = "x86")]
+        let top_level_bits = 22;
+        #[cfg(target_arch = "x86_64")]
+        let top_level_bits = 39;
+        Self(PageTableLevel(addr, top_level_bits))
+    }
+}
 
-        let mask = PAGE_TABLE_ENTRIES - 1;
-        let index = vaddr.as_usize() >> layer.1 & mask;
+impl PageTableLevel {
+    /// Map the page table level to tmp page
+    /// and get the page table entry associated with this address
+    fn lock_entry(&self, vaddr: VirtAddr) -> crate::sync::MappedLockGuard<entry::PTEntry> {
+        let page_table = tmp_page::map::<super::PageTable>(self.0);
+
+        let mask = super::PAGE_TABLE_ENTRIES - 1;
+        let index = (vaddr.as_usize() >> self.1) & mask;
         crate::sync::MappedLockGuard::map(page_table, |page_table| &mut page_table[index])
     }
 }
 
-impl AddressSpaceTrait for AddressSpace {
-    type Layer = (PhysAddr, usize);
+impl NestedPageTable for AddressSpace {
+    type PageSize = PageSize;
+    type Level = PageTableLevel;
 
-    fn page_size(layer: &Self::Layer) -> usize {
-        1 << layer.1
+    fn top_level(&self) -> Self::Level {
+        self.0.clone()
+    }
+}
+
+impl NestedPageTableLevel for PageTableLevel {
+    type PageSize = PageSize;
+
+    fn region_size(&self) -> usize {
+        1 << self.1
+    }
+
+    fn new_sublevel(&self, alloc: &impl PageAllocatorTrait<Self::PageSize>) -> Option<Self> {
+        let addr = alloc.alloc(PageSize::Size4K)?;
+        let mut page_table = tmp_page::map::<super::PageTable>(addr);
+
+        // Clear the page table
+        for index in 0..super::PAGE_TABLE_ENTRIES {
+            page_table[index] = entry::PTEntry::NULL;
+        }
+
+        Some(PageTableLevel(addr, self.1 - super::PAGE_LEVEL_BITS))
+    }
+
+    fn free_sublevel(
+        &self,
+        sublevel: Self,
+        alloc: &impl PageAllocatorTrait<Self::PageSize>,
+    ) -> MappingResult<()> {
+        alloc.free(sublevel.0, PageSize::Size4K);
+        Ok(())
     }
 
     fn set_entry(
-        layer: Self::Layer,
+        &self,
         vaddr: VirtAddr,
-        paddr: PhysAddr,
-        page_size: crate::arch::paging::PageSize,
-        flags: MappingFlags,
+        new_entry: crate::memory::address_space::nested_page_table::PageTableEntry<Self>,
     ) -> MappingResult<()> {
-        debug_assert_eq!(1usize << layer.1, page_size as usize);
-        let mut entry = Self::get_entry(&layer, vaddr);
-        if entry.flags().contains(PTEFlags::P) {
+        if matches!(new_entry, if_entry::PageTableEntry::Page(_, _)) {
+            debug_assert!(vaddr.is_aligned(1usize << self.1));
+        }
+
+        let mut entry = self.lock_entry(vaddr);
+        if self.1 > 12 && entry.flags().contains(entry::PTEFlags::PS) {
             return Err(MappingError::MappingOver(entry.address()));
         }
-        *entry = PTEntry::new_page(paddr, page_size, flags.into());
-        flush_tlb(vaddr);
-        Ok(())
-    }
 
-    fn unset_entry(
-        layer: Self::Layer,
-        vaddr: VirtAddr,
-        page_size: crate::arch::paging::PageSize,
-    ) -> MappingResult<()> {
-        debug_assert_eq!(1usize << layer.1, page_size as usize);
-        let mut entry = Self::get_entry(&layer, vaddr);
-        if !entry.flags().contains(PTEFlags::P) {
-            return Err(MappingError::UnmappingNotMapped(vaddr));
-        }
-        *entry = PTEntry::NULL;
-        flush_tlb(vaddr);
-        Ok(())
-    }
-
-    fn next_layer(layer: Self::Layer, vaddr: VirtAddr, map: bool) -> MappingResult<Self::Layer> {
-        let mut entry = Self::get_entry(&layer, vaddr);
-
-        if entry.flags().contains(PTEFlags::P | PTEFlags::PS) {
-            if map {
-                return Err(MappingError::MappingOver(entry.address()));
-            } else {
-                return Err(MappingError::UnmappingPartOfLargePage(entry.address()));
+        *entry = match new_entry {
+            if_entry::PageTableEntry::Level(level) => entry::PTEntry::new_page_table(level.0),
+            if_entry::PageTableEntry::Page(paddr, flags) => {
+                entry::PTEntry::new_page(paddr, self.page_size().unwrap(), flags.into())
             }
-        }
-
-        let entry = if !entry.flags().contains(PTEFlags::P) {
-            drop(entry);
-            if !map {
-                return Err(MappingError::UnmappingNotMapped(vaddr));
-            }
-
-            // Create a new page table
-            let page_table_addr = page_alloc::alloc_page(PageSize::Size4K as _);
-            let mut page_table = tmp_page::map::<PageTable>(page_table_addr);
-
-            // Clear the page table
-            for index in 0..PAGE_TABLE_ENTRIES {
-                page_table[index] = PTEntry::NULL;
-            }
-
-            drop(page_table);
-
-            // Set the entry to this page table
-            let mut entry = Self::get_entry(&layer, vaddr);
-            *entry = PTEntry::new_page_table(page_table_addr);
-            entry
-        } else {
-            entry
         };
 
-        Ok((entry.address(), layer.1 - PAGE_LEVEL_BITS))
+        // TODO: Check if this page table is currently active
+        super::flush_tlb(vaddr);
+        Ok(())
     }
 
-    fn top_layer(&self) -> Self::Layer {
-        #[cfg(target_arch = "x86")]
-        return (self.0, 22);
-        #[cfg(target_arch = "x86_64")]
-        return (self.0, 39);
+    fn get_entry(&self, vaddr: VirtAddr) -> MappingResult<if_entry::PageTableEntry<Self>> {
+        let entry = self.lock_entry(vaddr);
+        if entry.flags().contains(entry::PTEFlags::P)
+            && self.1 > 12
+            && !entry.flags().contains(entry::PTEFlags::PS)
+        {
+            Ok(if_entry::PageTableEntry::Level(PageTableLevel(
+                entry.address(),
+                self.1 - super::PAGE_LEVEL_BITS,
+            )))
+        } else {
+            Ok(if_entry::PageTableEntry::Page(
+                entry.address(),
+                entry.flags().into(),
+            ))
+        }
+    }
+}
+
+impl AddressSpaceTrait<PageSize> for AddressSpace {
+    fn map_alloc(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        flags: if_entry::MappingFlags,
+        alloc: &impl PageAllocatorTrait<PageSize>,
+    ) -> MappingResult<VirtAddr> {
+        <Self as NestedPageTable>::map_alloc(self, vaddr, size, flags, alloc)
+    }
+
+    fn unmap_free(
+        &self,
+        vaddr: VirtAddr,
+        size: usize,
+        alloc: &impl PageAllocatorTrait<PageSize>,
+    ) -> MappingResult<()> {
+        <Self as NestedPageTable>::unmap_free(self, vaddr, size, alloc)
     }
 }

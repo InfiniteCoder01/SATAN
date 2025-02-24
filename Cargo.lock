@@ -155,6 +155,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lock_free_buddy_allocator"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2b8256be05fb9612e0276693020bed985954c9e5c621f4ec6edec822af6b13b"
+
+[[package]]
 name = "log"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -310,10 +316,12 @@ dependencies = [
  "bitflags",
  "cc",
  "lock_api",
+ "lock_free_buddy_allocator",
  "memory_addr",
  "multiboot2",
  "portable",
  "spin",
+ "talc",
  "thiserror",
 ]
 
@@ -358,6 +366,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "talc"
+version = "4.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fcad3be1cfe36eb7d716a04791eba36a197da9d9b6ea1e28e64ac569da3701d"
+dependencies = [
+ "lock_api",
 ]
 
 [[package]]

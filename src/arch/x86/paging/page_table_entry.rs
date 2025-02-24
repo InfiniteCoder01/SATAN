@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::MappingFlags;
 
 bitflags::bitflags! {
     /// Page table entry flags (first byte from the right)
@@ -43,6 +44,32 @@ impl From<MappingFlags> for PTEFlags {
         }
         if value.contains(MappingFlags::GLOBAL) {
             flags |= Self::G;
+        }
+        flags
+    }
+}
+
+impl From<PTEFlags> for MappingFlags {
+    fn from(value: PTEFlags) -> Self {
+        let mut flags = Self::empty();
+        if value.contains(PTEFlags::P) {
+            flags |= Self::PRESENT;
+        }
+        if value.contains(PTEFlags::RW) {
+            flags |= Self::WRITE;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if value.contains(todo!()) {
+            flags |= Self::EXECUTE;
+        }
+        if value.contains(PTEFlags::US) {
+            flags |= Self::USER;
+        }
+        if value.contains(PTEFlags::PCD) {
+            flags |= Self::UNCACHED;
+        }
+        if value.contains(PTEFlags::G) {
+            flags |= Self::GLOBAL;
         }
         flags
     }

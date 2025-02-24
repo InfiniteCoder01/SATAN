@@ -31,16 +31,16 @@ struct InterruptStackFrame {
 
 /// Central interrupt handler, all interrupts come here specifying an interrupt number
 fn interrupt_handler(interrupt: u8, error_code: usize) {
+    if interrupt == 0x20 {
+        // Timer
+        return;
+    }
     if interrupt == 0x0E {
         // Page fault
         crate::println!("Page fault!\nError code:\n{:#032b}", error_code);
         crate::println!("                ^        ^^IRUWP");
         crate::println!("               SGX      SSPK    ");
-        return;
-    }
-    if interrupt == 0x20 {
-        // Timer
-        return;
+        panic!("Halt");
     }
     if interrupt == 0x21 {
         // Keyboard
@@ -48,7 +48,15 @@ fn interrupt_handler(interrupt: u8, error_code: usize) {
         crate::println!("Keyboard: {}", scancode);
         return;
     }
-
+    if interrupt <= 0x08 {
+        panic!("Double fault!!!\nError code: {:#x}", error_code);
+    }
+    if interrupt <= 0x1F {
+        panic!(
+            "Unhandled exception: {:#x}\nError code: {:#x}",
+            interrupt, error_code
+        );
+    }
     loop {}
 }
 
