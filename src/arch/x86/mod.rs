@@ -1,21 +1,32 @@
 #[cfg(target_arch = "x86")]
 core::arch::global_asm!(include_str!("x32/bootstrap.S"), options(att_syntax));
 
-/// Instructions like cpuid
-pub mod instructions;
-
 /// Early logging facilities
-pub mod early_logger;
-pub use early_logger::{_panic, _print};
+mod early_logger;
+
+/// CPU Interface
+mod cpu;
 
 /// Interrupts and IDT
-pub mod interrupts;
+mod interrupts;
 
 /// Paging implementation
 /// I spent a lot of time here.
 /// And I hate every single second of it.
-pub mod paging;
+mod memory;
 
+#[cfg(feature = "kernel-tests")]
+mod tests;
+
+/// Arch implementation
+pub struct Arch;
+impl crate::arch::ArchTrait for Arch {
+    type EarlyLogger = early_logger::EarlyLogger;
+    type Cpu = cpu::Cpu;
+    type Memory = memory::Memory;
+}
+
+/// Allocator
 mod allocator {
     const SIZE: usize = 0x1000;
     static mut ARENA: [u8; SIZE] = [0; SIZE];
@@ -55,7 +66,10 @@ pub extern "cdecl" fn ksetup(mb_magic: u32, mbi_ptr: u32) -> ! {
         );
     };
 
-    paging::setup_paging(&boot_info);
+    memory::setup_paging(&boot_info);
+
+    #[cfg(feature = "kernel-tests")]
+    tests::run();
 
     loop {}
 }

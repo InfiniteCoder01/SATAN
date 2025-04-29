@@ -63,9 +63,21 @@ fn flush_tlb(address: VirtAddr) {
     }
 }
 
+static PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
+
+pub struct Memory;
+impl crate::arch::MemoryTrait for Memory {
+    type PageSize = PageSize;
+
+    type PageAllocator = PageAllocator;
+
+    fn page_allocator() -> &'static Self::PageAllocator {
+        &PAGE_ALLOCATOR
+    }
+}
+
 /// Setup paging
 pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
-    let page_allocator = PageAllocator::new();
     let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
     let kernel_address_space = AddressSpace::from_paddr(kernel_virt2phys(kernel_address_space));
 
@@ -85,47 +97,14 @@ pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
                 continue;
             }
 
-            if page_allocator
+            if PAGE_ALLOCATOR
                 .add_zone(start.as_usize(), memory_addr::align_down_4k(end - start))
                 .is_err()
             {
-                crate::println!("Failed to add some memory zones");
+                crate::println!("Failed to add memory zone {:#x} to {:#x}", start, end);
             }
         }
     }
-
-    // TODO: Free boot info and bootstrap code
-
-    // TEST
-    crate::println!("Total memory: {}", page_allocator.total_memory());
-    use crate::memory::MappingFlags;
-    use crate::memory::{AddressSpaceTrait, PageSizeTrait};
-    let test = 0xc0801000 as *mut u32;
-    let test = kernel_address_space
-        .map_alloc(
-            VirtAddr::from_mut_ptr_of(test),
-            PageSize::MIN as _,
-            MappingFlags::PRESENT | MappingFlags::READ | MappingFlags::WRITE,
-            &page_allocator,
-        )
-        .unwrap()
-        .as_mut_ptr_of();
-    crate::println!("Mapped!");
-    crate::println!("Allocated memory: {}", page_allocator.allocated_memory());
-    unsafe {
-        *test = 42;
-    };
-    crate::println!("Wrote!");
-    crate::println!("Testing page mapping: {}", unsafe { *test });
-    kernel_address_space
-        .unmap_free(VirtAddr::from_mut_ptr_of(test), 4096, &page_allocator)
-        .unwrap();
-    crate::println!(
-        "Allocated memory after freeing: {}",
-        page_allocator.allocated_memory()
-    );
-    crate::println!("Testing page unmapping (You should see a page fault):");
-    crate::println!("Huh? {}", unsafe { *test });
 }
 
 macro_rules! linker_symbol {

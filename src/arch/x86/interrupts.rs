@@ -2,7 +2,7 @@ use portable::PortRw as _;
 
 /// Enable interrupts
 #[inline]
-pub fn enable() {
+pub(super) fn enable() {
     unsafe {
         core::arch::asm!("sti");
     }
@@ -10,7 +10,7 @@ pub fn enable() {
 
 /// Disable interrupts
 #[inline]
-pub fn disable() {
+pub(super) fn disable() {
     unsafe {
         core::arch::asm!("cli");
     }

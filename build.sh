@@ -27,7 +27,7 @@ fi
 
 # Utils
 build() {
-	if ! cargo build; then
+	if ! cargo build "$@"; then
 		return 1
 	fi
 
@@ -45,18 +45,18 @@ build() {
 }
 
 run() {
-	if [ $EMULATOR = "bochs" ]; then
+	if [ "$EMULATOR" = "bochs" ]; then
 		bochs -q
 	else
-		qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso
+		qemu-system-"$QEMU_SYSTEM" -d guest_errors -no-reboot -cdrom bin/os.iso
 	fi
 }
 
 debug() {
-	if [ $EMULATOR = "bochs" ]; then
+	if [ "$EMULATOR" = "bochs" ]; then
 		bochs -q
 	else
-		qemu-system-$QEMU_SYSTEM -d guest_errors -no-reboot -cdrom bin/os.iso -s -S &
+		qemu-system-"$QEMU_SYSTEM" -d guest_errors -no-reboot -cdrom bin/os.iso -s -S &
 		rust-gdb target/target/debug/satan -x gdbinit
 	fi
 }
@@ -80,6 +80,7 @@ help() {
 	build - build kernel and OS
 	run - build and run the OS
 	debug - build and run the OS, drop into gdb
+	test - build kernel with kernel tests and run it
 	print - print current parameters
 	clean - remove all build artifacts
 	help - show this message
@@ -92,6 +93,7 @@ command() {
 		build) build;;
 		run) build && run;;
 		debug) build && debug;;
+		test) build --features kernel-tests && run;;
 		print) print;;
 		clean)  clean;;
 		help)  help;;

@@ -12,5 +12,7 @@ Then, run the build script by issuing `./build.sh`
 
 ## Help!!!
 Here are some things you could help with:
+- Current paging/address space implementation dealt me so much pain that I can't even look at it now.
+Would be nice if anyone could help rewrite it in a rusty way!
 - Find a way to make freeing in ZonedBuddy page allocator checked (you can free a random page rigth now and it won't even panic)
 - Find a way to also check freeing in NestedPageTable

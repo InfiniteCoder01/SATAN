@@ -1,8 +1,9 @@
+use crate::arch::traits::*;
 use core::panic::PanicInfo;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    crate::arch::_panic(format_args!("{}", info));
+    crate::arch::EarlyLogger::_panic(format_args!("{}", info))
 }
 
 #[macro_export]
@@ -13,5 +14,5 @@ macro_rules! println {
 
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::arch::_print(format_args!($($arg)*)));
+    ($($arg:tt)*) => (<$crate::arch::EarlyLogger as $crate::arch::LoggerTrait>::_print(format_args!($($arg)*)));
 }

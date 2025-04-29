@@ -5,7 +5,7 @@ const VGA_BUFFER: usize = 0xb8000;
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
-pub enum Color {
+enum Color {
     Black = 0,
     Blue = 1,
     Green = 2,
@@ -38,18 +38,18 @@ impl Character {
 }
 
 type Buffer = [[Character; VGA_WIDTH]; VGA_HEIGHT];
-pub struct Writer {
+struct Writer {
     col: usize,
     color: u8,
     buffer: *mut Buffer,
 }
 
 impl Writer {
-    pub fn set_color(&mut self, fg: Color, bg: Color) {
+    fn set_color(&mut self, fg: Color, bg: Color) {
         self.color = (bg as u8) << 4 | (fg as u8);
     }
 
-    pub fn write(&mut self, ch: u8) {
+    fn write(&mut self, ch: u8) {
         match ch {
             b'\n' => self.new_line(),
             b'\r' => self.col = 0,
@@ -65,7 +65,7 @@ impl Writer {
         }
     }
 
-    pub fn new_line(&mut self) {
+    fn new_line(&mut self) {
         for row in 1..VGA_HEIGHT {
             for col in 0..VGA_WIDTH {
                 unsafe {
@@ -77,7 +77,7 @@ impl Writer {
         self.col = 0;
     }
 
-    pub fn clear_row(&mut self, row: usize) {
+    fn clear_row(&mut self, row: usize) {
         let blank = Character::new(b' ', self.color);
         for col in 0..VGA_WIDTH {
             unsafe {
@@ -98,7 +98,7 @@ impl core::fmt::Write for Writer {
 
 unsafe impl Send for Writer {}
 
-pub static WRITER: spin::Mutex<Writer> = {
+static WRITER: spin::Mutex<Writer> = {
     spin::Mutex::new(Writer {
         col: 0,
         color: 0x0f,
@@ -106,17 +106,20 @@ pub static WRITER: spin::Mutex<Writer> = {
     })
 };
 
-pub fn _print(args: core::fmt::Arguments) {
-    use core::fmt::Write as _;
-    WRITER.lock().write_fmt(args).unwrap();
-}
+pub struct EarlyLogger;
+impl crate::arch::LoggerTrait for EarlyLogger {
+    fn _print(args: core::fmt::Arguments) {
+        use core::fmt::Write as _;
+        WRITER.lock().write_fmt(args).unwrap();
+    }
 
-pub fn _panic(args: core::fmt::Arguments) -> ! {
-    use core::fmt::Write as _;
-    let mut writer = WRITER.lock();
-    writer.set_color(Color::Red, Color::Black);
-    writer.write_fmt(args).unwrap();
-    crate::arch::interrupts::disable();
-    #[allow(clippy::empty_loop)]
-    loop {}
+    fn _panic(args: core::fmt::Arguments) -> ! {
+        use core::fmt::Write as _;
+        let mut writer = WRITER.lock();
+        writer.set_color(Color::Red, Color::Black);
+        writer.write_fmt(args).unwrap();
+        super::interrupts::disable();
+        #[allow(clippy::empty_loop)]
+        loop {}
+    }
 }

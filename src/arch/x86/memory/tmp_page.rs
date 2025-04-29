@@ -13,6 +13,7 @@ static TMP_PAGE_MUTEX: crate::sync::Lock = crate::sync::Lock::new(());
 
 /// Map a physical address to the TMP page. Returns virtual address of the TMP page
 pub(super) fn map<T>(addr: PhysAddr) -> crate::sync::MappedLockGuard<T> {
+    // TODO: Make it lock-free for multiple CPUs
     debug_assert!(
         core::mem::size_of::<T>() <= memory_addr::PAGE_SIZE_4K,
         "TMP page is mapped with a type bigger than one page"

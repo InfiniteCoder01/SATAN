@@ -13,6 +13,7 @@ pub mod sync;
 
 /// Architecture implementaitons
 pub mod arch;
+pub use arch::Arch;
 
 /// Basic logging facilities, calling arch-specific early print and panic functions
 pub mod log;

@@ -38,5 +38,5 @@ fn main() {
     })
     .unwrap();
 
-    cc.compile("satan");
+    // cc.compile("satan");
 }

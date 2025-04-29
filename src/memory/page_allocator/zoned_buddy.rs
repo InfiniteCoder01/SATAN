@@ -1,3 +1,4 @@
+use crate::arch::traits::*;
 use core::alloc::AllocError;
 use core::sync::atomic::AtomicUsize;
 
@@ -7,7 +8,7 @@ use crate::sync::RwLock;
 struct CpuId;
 impl lock_free_buddy_allocator::cpuid::Cpu for CpuId {
     fn current_cpu() -> usize {
-        crate::arch::instructions::cpu_id()
+        crate::arch::Cpu::cpu_id()
     }
 }
 
@@ -26,6 +27,7 @@ struct Zone<const PAGE_SIZE: usize> {
 /// Zone-based buddy allocator. Manages zones,
 /// each zone having a separate binary buddy,
 /// similar to how linux does this
+/// Core RwLock is only locked for wiritng when adding zones
 pub struct ZonedBuddy<const BLOCK_SIZE: usize> {
     zones: RwLock<alloc::vec::Vec<Zone<BLOCK_SIZE>>>,
 }
