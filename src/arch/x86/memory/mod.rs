@@ -68,19 +68,22 @@ static PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
 pub struct Memory;
 impl crate::arch::MemoryTrait for Memory {
     type PageSize = PageSize;
-
     type PageAllocator = PageAllocator;
+    type AddressSpace = AddressSpace;
 
     fn page_allocator() -> &'static Self::PageAllocator {
         &PAGE_ALLOCATOR
+    }
+
+    fn kernel_address_space() -> Self::AddressSpace {
+        let kernel_address_space =
+            VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
+        AddressSpace::from_paddr(kernel_virt2phys(kernel_address_space))
     }
 }
 
 /// Setup paging
 pub(super) fn setup_paging(boot_info: &multiboot2::BootInformation) {
-    let kernel_address_space = VirtAddr::from_usize(&raw const KERNEL_TOP_LEVEL_PAGE_TABLE as _);
-    let kernel_address_space = AddressSpace::from_paddr(kernel_virt2phys(kernel_address_space));
-
     // Add zones to the page allocator
     let memory_map_tag = boot_info
         .memory_map_tag()

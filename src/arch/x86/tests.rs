@@ -1,4 +1,15 @@
+use crate::arch::traits::*;
+
 pub(super) fn run() -> ! {
+    test_paging();
+    panic!("Testing finished");
+}
+
+fn test_paging() {
+    use crate::memory::*;
+    let page_allocator = crate::arch::Memory::page_allocator();
+    let kernel_address_space = crate::arch::Memory::kernel_address_space();
+
     crate::println!("Total memory: {}", page_allocator.total_memory());
 
     use crate::memory::MappingFlags;
@@ -7,9 +18,9 @@ pub(super) fn run() -> ! {
     let test = kernel_address_space
         .map_alloc(
             VirtAddr::from_mut_ptr_of(test),
-            PageSize::MIN as _,
+            crate::arch::x86::memory::PageSize::MIN as _,
             MappingFlags::PRESENT | MappingFlags::READ | MappingFlags::WRITE,
-            &page_allocator,
+            page_allocator,
         )
         .unwrap()
         .as_mut_ptr_of();
@@ -21,7 +32,7 @@ pub(super) fn run() -> ! {
     crate::println!("Wrote!");
     crate::println!("Testing page mapping: {}", unsafe { *test });
     kernel_address_space
-        .unmap_free(VirtAddr::from_mut_ptr_of(test), 4096, &page_allocator)
+        .unmap_free(VirtAddr::from_mut_ptr_of(test), 4096, page_allocator)
         .unwrap();
     crate::println!(
         "Allocated memory after freeing: {}",
@@ -29,5 +40,4 @@ pub(super) fn run() -> ! {
     );
     crate::println!("Testing page unmapping (You should see a page fault):");
     crate::println!("Huh? {}", unsafe { *test });
-    panic!("Testing finished");
 }

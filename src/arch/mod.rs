@@ -16,7 +16,9 @@ pub mod traits {
     pub trait MemoryTrait {
         type PageSize: crate::memory::PageSizeTrait;
         type PageAllocator: crate::memory::PageAllocatorTrait<Self::PageSize>;
+        type AddressSpace: crate::memory::AddressSpaceTrait<Self::PageSize>;
         fn page_allocator() -> &'static Self::PageAllocator;
+        fn kernel_address_space() -> Self::AddressSpace;
     }
 
     /// A trait that every architecture has to implement
