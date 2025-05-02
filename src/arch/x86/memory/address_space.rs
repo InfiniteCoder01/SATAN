@@ -105,7 +105,9 @@ impl NestedPageTableLevel for PageTableLevel {
         };
 
         // TODO: Check if this page table is currently active
-        super::flush_tlb(vaddr);
+        unsafe {
+            x86::tlb::flush(vaddr.as_usize());
+        }
         Ok(())
     }
 

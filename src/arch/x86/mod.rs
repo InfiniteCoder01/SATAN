@@ -68,6 +68,10 @@ pub extern "cdecl" fn ksetup(mb_magic: u32, mbi_ptr: u32) -> ! {
 
     memory::setup_paging(&boot_info);
 
+    unsafe {
+        core::arch::asm!("int $0x80", options(att_syntax));
+    }
+
     #[cfg(feature = "kernel-tests")]
     tests::run();
 

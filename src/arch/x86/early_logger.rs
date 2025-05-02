@@ -118,7 +118,9 @@ impl crate::arch::LoggerTrait for EarlyLogger {
         let mut writer = WRITER.lock();
         writer.set_color(Color::Red, Color::Black);
         writer.write_fmt(args).unwrap();
-        super::interrupts::disable();
+        unsafe {
+            x86::irq::disable();
+        }
         #[allow(clippy::empty_loop)]
         loop {}
     }

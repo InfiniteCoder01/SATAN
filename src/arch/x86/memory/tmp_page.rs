@@ -29,7 +29,7 @@ pub(super) fn map<T>(addr: PhysAddr) -> crate::sync::MappedLockGuard<T> {
         unsafe {
             if *TMP_PAGE_ENTRY != entry {
                 *TMP_PAGE_ENTRY = entry;
-                flush_tlb(address());
+                x86::tlb::flush(address().as_usize());
             }
         }
         unsafe { &mut *address().as_mut_ptr_of() }

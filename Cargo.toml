@@ -30,9 +30,9 @@ memory_addr = "0.3.1"
 lock_free_buddy_allocator = "0.1.0"
 talc = "4.4.2"
 
-[target.'cfg(any(target_arch = "x86_64", target_arch = "x86"))'.dependencies]
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
 multiboot2 = { version = "0.23.1", default-features = false }
-portable = "0.2.1"
+x86 = "0.52.0"
 
 [build-dependencies]
 cc = "<=1.0.73"

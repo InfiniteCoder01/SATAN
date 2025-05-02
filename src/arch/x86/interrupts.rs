@@ -1,36 +1,5 @@
-use portable::PortRw as _;
-
-/// Enable interrupts
-#[inline]
-pub(super) fn enable() {
-    unsafe {
-        core::arch::asm!("sti");
-    }
-}
-
-/// Disable interrupts
-#[inline]
-pub(super) fn disable() {
-    unsafe {
-        core::arch::asm!("cli");
-    }
-}
-
-// -------------------------------- ISR
-/// Interrupt stack frame
-#[repr(C)]
-struct InterruptStackFrame {
-    instruction_pointer: usize,
-    code_segment: u16,
-    flags: usize,
-    #[cfg(target_arch = "x86_64")]
-    stack_pointer: usize,
-    #[cfg(target_arch = "x86_64")]
-    stack_segment: u16,
-}
-
 /// Central interrupt handler, all interrupts come here specifying an interrupt number
-fn interrupt_handler(interrupt: u8, error_code: usize) {
+extern "C" fn interrupt_handler(interrupt: u8, error_code: usize) {
     if interrupt == 0x20 {
         // Timer
         return;
@@ -44,76 +13,36 @@ fn interrupt_handler(interrupt: u8, error_code: usize) {
     }
     if interrupt == 0x21 {
         // Keyboard
-        let scancode = u8::read(0x60);
+        let scancode = unsafe { x86::io::inb(0x60) };
         crate::println!("Keyboard: {}", scancode);
         return;
     }
-    if interrupt <= 0x08 {
-        panic!("Double fault!!!\nError code: {:#x}", error_code);
+    if interrupt == 0x80 {
+        // Syscall
+        crate::println!("TEST: {}", 0);
+        return;
     }
-    if interrupt <= 0x1F {
+    if interrupt < 0x20 {
         panic!(
-            "Unhandled exception: {:#x}\nError code: {:#x}",
-            interrupt, error_code
+            "{}\nError code: {:#x}",
+            x86::irq::EXCEPTIONS[interrupt as usize].description,
+            error_code
         );
     }
-    loop {}
+    panic!(
+        "Unknown interrupt: {:#x}\nError code: {:#x}",
+        interrupt, error_code
+    );
 }
 
 // -------------------------------- IDT
-/// IDT descriptor, one per interrupt
-#[repr(C)]
-struct IDTDescriptor {
-    offset_1: u16,       // offset bits 0..15
-    selector: u16,       // a code segment selector in GDT or LDT
-    reserved1: u8,       // unused, set to 0
-    type_attributes: u8, // gate type, dpl, and p fields
-    offset_2: u16,       // offset bits 16..31
-    #[cfg(target_arch = "x86_64")]
-    offset_3: u32, // offset bits 32..63
-    #[cfg(target_arch = "x86_64")]
-    reserved2: u32, // unused, set to 0
-}
+#[cfg(target_arch = "x86")]
+type Descriptor = x86::segmentation::Descriptor;
+#[cfg(target_arch = "x86_64")]
+type Descriptor = x86::bits64::segmentation::Descriptor64;
 
-impl IDTDescriptor {
-    /// Null descriptor
-    const NULL: Self = Self {
-        offset_1: 0,
-        selector: 0,
-        reserved1: 0,
-        type_attributes: 0,
-        offset_2: 0,
-        #[cfg(target_arch = "x86_64")]
-        offset_3: 0,
-        #[cfg(target_arch = "x86_64")]
-        reserved2: 0,
-    };
-
-    fn new(offset: usize, selector: u16, type_attributes: u8) -> Self {
-        Self {
-            offset_1: (offset & 0xffff) as _,
-            selector,
-            reserved1: 0,
-            type_attributes,
-            offset_2: (offset >> 16 & 0xffff) as _,
-            #[cfg(target_arch = "x86_64")]
-            offset_3: (offset >> 32 & 0xffffffff) as _,
-            #[cfg(target_arch = "x86_64")]
-            reserved2: 0,
-        }
-    }
-}
-
-/// IDTR, holds address and size of the IDT
-#[repr(C, packed)]
-struct Idtr {
-    limit: u16,
-    base: usize,
-}
-
-type Idt = [IDTDescriptor; 256];
-static mut IDT: Idt = [IDTDescriptor::NULL; 256];
-static mut IDTR: Idtr = Idtr { limit: 0, base: 0 };
+static mut IDT: [Descriptor; 256] = [Descriptor::NULL; 256];
+static mut IDTR: Option<x86::dtables::DescriptorTablePointer<Descriptor>> = None;
 
 // -------------------------------- All the interrupts
 macro_rules! int {
@@ -124,40 +53,28 @@ macro_rules! int {
     };
     ($name: ident($no: literal)) => {
         extern "x86-interrupt" fn $name () {
-            unsafe {
-                core::arch::asm!("pusha", options(att_syntax));
-                interrupt_handler($no, 0);
-                core::arch::asm!("popa", options(att_syntax));
-            }
+            interrupt_handler($no, 0);
         }
     };
     ($name: ident($no: literal, ec)) => {
         extern "x86-interrupt" fn $name (error_code: usize) {
-            unsafe {
-                core::arch::asm!("pusha", options(att_syntax));
-                interrupt_handler($no, error_code);
-                core::arch::asm!("popa", options(att_syntax));
-            }
+            interrupt_handler($no, error_code);
         }
     };
     ($name: ident($no: literal, m)) => {
         extern "x86-interrupt" fn $name () {
             unsafe {
-                core::arch::asm!("pusha", options(att_syntax));
                 interrupt_handler($no, 0);
-                u8::write(0x20, 0x20);
-                core::arch::asm!("popa", options(att_syntax));
+                x86::io::outb(0x20, 0x20);
             }
         }
     };
     ($name: ident($no: literal, s)) => {
         extern "x86-interrupt" fn $name () {
             unsafe {
-                core::arch::asm!("pusha", options(att_syntax));
                 interrupt_handler($no, 0);
-                u8::write(0x20, 0x20);
-                u8::write(0xa0, 0x20);
-                core::arch::asm!("popa", options(att_syntax));
+                x86::io::outb(0x20, 0x20);
+                x86::io::outb(0xa0, 0x20);
             }
         }
     };
@@ -189,280 +106,294 @@ int! {
 /// Setup IDT and program the PIC
 #[link_section = ".bootstrap"]
 pub(super) fn setup() {
-    unsafe {
-        IDT[0x00] = IDTDescriptor::new(int_0x00 as usize, 0x08, 0x8E);
-        IDT[0x01] = IDTDescriptor::new(int_0x01 as usize, 0x08, 0x8E);
-        IDT[0x02] = IDTDescriptor::new(int_0x02 as usize, 0x08, 0x8E);
-        IDT[0x03] = IDTDescriptor::new(int_0x03 as usize, 0x08, 0x8E);
-        IDT[0x04] = IDTDescriptor::new(int_0x04 as usize, 0x08, 0x8E);
-        IDT[0x05] = IDTDescriptor::new(int_0x05 as usize, 0x08, 0x8E);
-        IDT[0x06] = IDTDescriptor::new(int_0x06 as usize, 0x08, 0x8E);
-        IDT[0x07] = IDTDescriptor::new(int_0x07 as usize, 0x08, 0x8E);
-        IDT[0x08] = IDTDescriptor::new(int_0x08 as usize, 0x08, 0x8E);
-        IDT[0x09] = IDTDescriptor::new(int_0x09 as usize, 0x08, 0x8E);
-        IDT[0x0a] = IDTDescriptor::new(int_0x0a as usize, 0x08, 0x8E);
-        IDT[0x0b] = IDTDescriptor::new(int_0x0b as usize, 0x08, 0x8E);
-        IDT[0x0c] = IDTDescriptor::new(int_0x0c as usize, 0x08, 0x8E);
-        IDT[0x0d] = IDTDescriptor::new(int_0x0d as usize, 0x08, 0x8E);
-        IDT[0x0e] = IDTDescriptor::new(int_0x0e as usize, 0x08, 0x8E);
-        IDT[0x0f] = IDTDescriptor::new(int_0x0f as usize, 0x08, 0x8E);
-        IDT[0x10] = IDTDescriptor::new(int_0x10 as usize, 0x08, 0x8E);
-        IDT[0x11] = IDTDescriptor::new(int_0x11 as usize, 0x08, 0x8E);
-        IDT[0x12] = IDTDescriptor::new(int_0x12 as usize, 0x08, 0x8E);
-        IDT[0x13] = IDTDescriptor::new(int_0x13 as usize, 0x08, 0x8E);
-        IDT[0x14] = IDTDescriptor::new(int_0x14 as usize, 0x08, 0x8E);
-        IDT[0x15] = IDTDescriptor::new(int_0x15 as usize, 0x08, 0x8E);
-        IDT[0x16] = IDTDescriptor::new(int_0x16 as usize, 0x08, 0x8E);
-        IDT[0x17] = IDTDescriptor::new(int_0x17 as usize, 0x08, 0x8E);
-        IDT[0x18] = IDTDescriptor::new(int_0x18 as usize, 0x08, 0x8E);
-        IDT[0x19] = IDTDescriptor::new(int_0x19 as usize, 0x08, 0x8E);
-        IDT[0x1a] = IDTDescriptor::new(int_0x1a as usize, 0x08, 0x8E);
-        IDT[0x1b] = IDTDescriptor::new(int_0x1b as usize, 0x08, 0x8E);
-        IDT[0x1c] = IDTDescriptor::new(int_0x1c as usize, 0x08, 0x8E);
-        IDT[0x1d] = IDTDescriptor::new(int_0x1d as usize, 0x08, 0x8E);
-        IDT[0x1e] = IDTDescriptor::new(int_0x1e as usize, 0x08, 0x8E);
-        IDT[0x1f] = IDTDescriptor::new(int_0x1f as usize, 0x08, 0x8E);
-        IDT[0x20] = IDTDescriptor::new(int_0x20 as usize, 0x08, 0x8E);
-        IDT[0x21] = IDTDescriptor::new(int_0x21 as usize, 0x08, 0x8E);
-        IDT[0x22] = IDTDescriptor::new(int_0x22 as usize, 0x08, 0x8E);
-        IDT[0x23] = IDTDescriptor::new(int_0x23 as usize, 0x08, 0x8E);
-        IDT[0x24] = IDTDescriptor::new(int_0x24 as usize, 0x08, 0x8E);
-        IDT[0x25] = IDTDescriptor::new(int_0x25 as usize, 0x08, 0x8E);
-        IDT[0x26] = IDTDescriptor::new(int_0x26 as usize, 0x08, 0x8E);
-        IDT[0x27] = IDTDescriptor::new(int_0x27 as usize, 0x08, 0x8E);
-        IDT[0x28] = IDTDescriptor::new(int_0x28 as usize, 0x08, 0x8E);
-        IDT[0x29] = IDTDescriptor::new(int_0x29 as usize, 0x08, 0x8E);
-        IDT[0x2a] = IDTDescriptor::new(int_0x2a as usize, 0x08, 0x8E);
-        IDT[0x2b] = IDTDescriptor::new(int_0x2b as usize, 0x08, 0x8E);
-        IDT[0x2c] = IDTDescriptor::new(int_0x2c as usize, 0x08, 0x8E);
-        IDT[0x2d] = IDTDescriptor::new(int_0x2d as usize, 0x08, 0x8E);
-        IDT[0x2e] = IDTDescriptor::new(int_0x2e as usize, 0x08, 0x8E);
-        IDT[0x2f] = IDTDescriptor::new(int_0x2f as usize, 0x08, 0x8E);
-        IDT[0x30] = IDTDescriptor::new(int_0x30 as usize, 0x08, 0x8E);
-        IDT[0x31] = IDTDescriptor::new(int_0x31 as usize, 0x08, 0x8E);
-        IDT[0x32] = IDTDescriptor::new(int_0x32 as usize, 0x08, 0x8E);
-        IDT[0x33] = IDTDescriptor::new(int_0x33 as usize, 0x08, 0x8E);
-        IDT[0x34] = IDTDescriptor::new(int_0x34 as usize, 0x08, 0x8E);
-        IDT[0x35] = IDTDescriptor::new(int_0x35 as usize, 0x08, 0x8E);
-        IDT[0x36] = IDTDescriptor::new(int_0x36 as usize, 0x08, 0x8E);
-        IDT[0x37] = IDTDescriptor::new(int_0x37 as usize, 0x08, 0x8E);
-        IDT[0x38] = IDTDescriptor::new(int_0x38 as usize, 0x08, 0x8E);
-        IDT[0x39] = IDTDescriptor::new(int_0x39 as usize, 0x08, 0x8E);
-        IDT[0x3a] = IDTDescriptor::new(int_0x3a as usize, 0x08, 0x8E);
-        IDT[0x3b] = IDTDescriptor::new(int_0x3b as usize, 0x08, 0x8E);
-        IDT[0x3c] = IDTDescriptor::new(int_0x3c as usize, 0x08, 0x8E);
-        IDT[0x3d] = IDTDescriptor::new(int_0x3d as usize, 0x08, 0x8E);
-        IDT[0x3e] = IDTDescriptor::new(int_0x3e as usize, 0x08, 0x8E);
-        IDT[0x3f] = IDTDescriptor::new(int_0x3f as usize, 0x08, 0x8E);
-        IDT[0x40] = IDTDescriptor::new(int_0x40 as usize, 0x08, 0x8E);
-        IDT[0x41] = IDTDescriptor::new(int_0x41 as usize, 0x08, 0x8E);
-        IDT[0x42] = IDTDescriptor::new(int_0x42 as usize, 0x08, 0x8E);
-        IDT[0x43] = IDTDescriptor::new(int_0x43 as usize, 0x08, 0x8E);
-        IDT[0x44] = IDTDescriptor::new(int_0x44 as usize, 0x08, 0x8E);
-        IDT[0x45] = IDTDescriptor::new(int_0x45 as usize, 0x08, 0x8E);
-        IDT[0x46] = IDTDescriptor::new(int_0x46 as usize, 0x08, 0x8E);
-        IDT[0x47] = IDTDescriptor::new(int_0x47 as usize, 0x08, 0x8E);
-        IDT[0x48] = IDTDescriptor::new(int_0x48 as usize, 0x08, 0x8E);
-        IDT[0x49] = IDTDescriptor::new(int_0x49 as usize, 0x08, 0x8E);
-        IDT[0x4a] = IDTDescriptor::new(int_0x4a as usize, 0x08, 0x8E);
-        IDT[0x4b] = IDTDescriptor::new(int_0x4b as usize, 0x08, 0x8E);
-        IDT[0x4c] = IDTDescriptor::new(int_0x4c as usize, 0x08, 0x8E);
-        IDT[0x4d] = IDTDescriptor::new(int_0x4d as usize, 0x08, 0x8E);
-        IDT[0x4e] = IDTDescriptor::new(int_0x4e as usize, 0x08, 0x8E);
-        IDT[0x4f] = IDTDescriptor::new(int_0x4f as usize, 0x08, 0x8E);
-        IDT[0x50] = IDTDescriptor::new(int_0x50 as usize, 0x08, 0x8E);
-        IDT[0x51] = IDTDescriptor::new(int_0x51 as usize, 0x08, 0x8E);
-        IDT[0x52] = IDTDescriptor::new(int_0x52 as usize, 0x08, 0x8E);
-        IDT[0x53] = IDTDescriptor::new(int_0x53 as usize, 0x08, 0x8E);
-        IDT[0x54] = IDTDescriptor::new(int_0x54 as usize, 0x08, 0x8E);
-        IDT[0x55] = IDTDescriptor::new(int_0x55 as usize, 0x08, 0x8E);
-        IDT[0x56] = IDTDescriptor::new(int_0x56 as usize, 0x08, 0x8E);
-        IDT[0x57] = IDTDescriptor::new(int_0x57 as usize, 0x08, 0x8E);
-        IDT[0x58] = IDTDescriptor::new(int_0x58 as usize, 0x08, 0x8E);
-        IDT[0x59] = IDTDescriptor::new(int_0x59 as usize, 0x08, 0x8E);
-        IDT[0x5a] = IDTDescriptor::new(int_0x5a as usize, 0x08, 0x8E);
-        IDT[0x5b] = IDTDescriptor::new(int_0x5b as usize, 0x08, 0x8E);
-        IDT[0x5c] = IDTDescriptor::new(int_0x5c as usize, 0x08, 0x8E);
-        IDT[0x5d] = IDTDescriptor::new(int_0x5d as usize, 0x08, 0x8E);
-        IDT[0x5e] = IDTDescriptor::new(int_0x5e as usize, 0x08, 0x8E);
-        IDT[0x5f] = IDTDescriptor::new(int_0x5f as usize, 0x08, 0x8E);
-        IDT[0x60] = IDTDescriptor::new(int_0x60 as usize, 0x08, 0x8E);
-        IDT[0x61] = IDTDescriptor::new(int_0x61 as usize, 0x08, 0x8E);
-        IDT[0x62] = IDTDescriptor::new(int_0x62 as usize, 0x08, 0x8E);
-        IDT[0x63] = IDTDescriptor::new(int_0x63 as usize, 0x08, 0x8E);
-        IDT[0x64] = IDTDescriptor::new(int_0x64 as usize, 0x08, 0x8E);
-        IDT[0x65] = IDTDescriptor::new(int_0x65 as usize, 0x08, 0x8E);
-        IDT[0x66] = IDTDescriptor::new(int_0x66 as usize, 0x08, 0x8E);
-        IDT[0x67] = IDTDescriptor::new(int_0x67 as usize, 0x08, 0x8E);
-        IDT[0x68] = IDTDescriptor::new(int_0x68 as usize, 0x08, 0x8E);
-        IDT[0x69] = IDTDescriptor::new(int_0x69 as usize, 0x08, 0x8E);
-        IDT[0x6a] = IDTDescriptor::new(int_0x6a as usize, 0x08, 0x8E);
-        IDT[0x6b] = IDTDescriptor::new(int_0x6b as usize, 0x08, 0x8E);
-        IDT[0x6c] = IDTDescriptor::new(int_0x6c as usize, 0x08, 0x8E);
-        IDT[0x6d] = IDTDescriptor::new(int_0x6d as usize, 0x08, 0x8E);
-        IDT[0x6e] = IDTDescriptor::new(int_0x6e as usize, 0x08, 0x8E);
-        IDT[0x6f] = IDTDescriptor::new(int_0x6f as usize, 0x08, 0x8E);
-        IDT[0x70] = IDTDescriptor::new(int_0x70 as usize, 0x08, 0x8E);
-        IDT[0x71] = IDTDescriptor::new(int_0x71 as usize, 0x08, 0x8E);
-        IDT[0x72] = IDTDescriptor::new(int_0x72 as usize, 0x08, 0x8E);
-        IDT[0x73] = IDTDescriptor::new(int_0x73 as usize, 0x08, 0x8E);
-        IDT[0x74] = IDTDescriptor::new(int_0x74 as usize, 0x08, 0x8E);
-        IDT[0x75] = IDTDescriptor::new(int_0x75 as usize, 0x08, 0x8E);
-        IDT[0x76] = IDTDescriptor::new(int_0x76 as usize, 0x08, 0x8E);
-        IDT[0x77] = IDTDescriptor::new(int_0x77 as usize, 0x08, 0x8E);
-        IDT[0x78] = IDTDescriptor::new(int_0x78 as usize, 0x08, 0x8E);
-        IDT[0x79] = IDTDescriptor::new(int_0x79 as usize, 0x08, 0x8E);
-        IDT[0x7a] = IDTDescriptor::new(int_0x7a as usize, 0x08, 0x8E);
-        IDT[0x7b] = IDTDescriptor::new(int_0x7b as usize, 0x08, 0x8E);
-        IDT[0x7c] = IDTDescriptor::new(int_0x7c as usize, 0x08, 0x8E);
-        IDT[0x7d] = IDTDescriptor::new(int_0x7d as usize, 0x08, 0x8E);
-        IDT[0x7e] = IDTDescriptor::new(int_0x7e as usize, 0x08, 0x8E);
-        IDT[0x7f] = IDTDescriptor::new(int_0x7f as usize, 0x08, 0x8E);
-        IDT[0x80] = IDTDescriptor::new(int_0x80 as usize, 0x08, 0x8E);
-        IDT[0x81] = IDTDescriptor::new(int_0x81 as usize, 0x08, 0x8E);
-        IDT[0x82] = IDTDescriptor::new(int_0x82 as usize, 0x08, 0x8E);
-        IDT[0x83] = IDTDescriptor::new(int_0x83 as usize, 0x08, 0x8E);
-        IDT[0x84] = IDTDescriptor::new(int_0x84 as usize, 0x08, 0x8E);
-        IDT[0x85] = IDTDescriptor::new(int_0x85 as usize, 0x08, 0x8E);
-        IDT[0x86] = IDTDescriptor::new(int_0x86 as usize, 0x08, 0x8E);
-        IDT[0x87] = IDTDescriptor::new(int_0x87 as usize, 0x08, 0x8E);
-        IDT[0x88] = IDTDescriptor::new(int_0x88 as usize, 0x08, 0x8E);
-        IDT[0x89] = IDTDescriptor::new(int_0x89 as usize, 0x08, 0x8E);
-        IDT[0x8a] = IDTDescriptor::new(int_0x8a as usize, 0x08, 0x8E);
-        IDT[0x8b] = IDTDescriptor::new(int_0x8b as usize, 0x08, 0x8E);
-        IDT[0x8c] = IDTDescriptor::new(int_0x8c as usize, 0x08, 0x8E);
-        IDT[0x8d] = IDTDescriptor::new(int_0x8d as usize, 0x08, 0x8E);
-        IDT[0x8e] = IDTDescriptor::new(int_0x8e as usize, 0x08, 0x8E);
-        IDT[0x8f] = IDTDescriptor::new(int_0x8f as usize, 0x08, 0x8E);
-        IDT[0x90] = IDTDescriptor::new(int_0x90 as usize, 0x08, 0x8E);
-        IDT[0x91] = IDTDescriptor::new(int_0x91 as usize, 0x08, 0x8E);
-        IDT[0x92] = IDTDescriptor::new(int_0x92 as usize, 0x08, 0x8E);
-        IDT[0x93] = IDTDescriptor::new(int_0x93 as usize, 0x08, 0x8E);
-        IDT[0x94] = IDTDescriptor::new(int_0x94 as usize, 0x08, 0x8E);
-        IDT[0x95] = IDTDescriptor::new(int_0x95 as usize, 0x08, 0x8E);
-        IDT[0x96] = IDTDescriptor::new(int_0x96 as usize, 0x08, 0x8E);
-        IDT[0x97] = IDTDescriptor::new(int_0x97 as usize, 0x08, 0x8E);
-        IDT[0x98] = IDTDescriptor::new(int_0x98 as usize, 0x08, 0x8E);
-        IDT[0x99] = IDTDescriptor::new(int_0x99 as usize, 0x08, 0x8E);
-        IDT[0x9a] = IDTDescriptor::new(int_0x9a as usize, 0x08, 0x8E);
-        IDT[0x9b] = IDTDescriptor::new(int_0x9b as usize, 0x08, 0x8E);
-        IDT[0x9c] = IDTDescriptor::new(int_0x9c as usize, 0x08, 0x8E);
-        IDT[0x9d] = IDTDescriptor::new(int_0x9d as usize, 0x08, 0x8E);
-        IDT[0x9e] = IDTDescriptor::new(int_0x9e as usize, 0x08, 0x8E);
-        IDT[0x9f] = IDTDescriptor::new(int_0x9f as usize, 0x08, 0x8E);
-        IDT[0xa0] = IDTDescriptor::new(int_0xa0 as usize, 0x08, 0x8E);
-        IDT[0xa1] = IDTDescriptor::new(int_0xa1 as usize, 0x08, 0x8E);
-        IDT[0xa2] = IDTDescriptor::new(int_0xa2 as usize, 0x08, 0x8E);
-        IDT[0xa3] = IDTDescriptor::new(int_0xa3 as usize, 0x08, 0x8E);
-        IDT[0xa4] = IDTDescriptor::new(int_0xa4 as usize, 0x08, 0x8E);
-        IDT[0xa5] = IDTDescriptor::new(int_0xa5 as usize, 0x08, 0x8E);
-        IDT[0xa6] = IDTDescriptor::new(int_0xa6 as usize, 0x08, 0x8E);
-        IDT[0xa7] = IDTDescriptor::new(int_0xa7 as usize, 0x08, 0x8E);
-        IDT[0xa8] = IDTDescriptor::new(int_0xa8 as usize, 0x08, 0x8E);
-        IDT[0xa9] = IDTDescriptor::new(int_0xa9 as usize, 0x08, 0x8E);
-        IDT[0xaa] = IDTDescriptor::new(int_0xaa as usize, 0x08, 0x8E);
-        IDT[0xab] = IDTDescriptor::new(int_0xab as usize, 0x08, 0x8E);
-        IDT[0xac] = IDTDescriptor::new(int_0xac as usize, 0x08, 0x8E);
-        IDT[0xad] = IDTDescriptor::new(int_0xad as usize, 0x08, 0x8E);
-        IDT[0xae] = IDTDescriptor::new(int_0xae as usize, 0x08, 0x8E);
-        IDT[0xaf] = IDTDescriptor::new(int_0xaf as usize, 0x08, 0x8E);
-        IDT[0xb0] = IDTDescriptor::new(int_0xb0 as usize, 0x08, 0x8E);
-        IDT[0xb1] = IDTDescriptor::new(int_0xb1 as usize, 0x08, 0x8E);
-        IDT[0xb2] = IDTDescriptor::new(int_0xb2 as usize, 0x08, 0x8E);
-        IDT[0xb3] = IDTDescriptor::new(int_0xb3 as usize, 0x08, 0x8E);
-        IDT[0xb4] = IDTDescriptor::new(int_0xb4 as usize, 0x08, 0x8E);
-        IDT[0xb5] = IDTDescriptor::new(int_0xb5 as usize, 0x08, 0x8E);
-        IDT[0xb6] = IDTDescriptor::new(int_0xb6 as usize, 0x08, 0x8E);
-        IDT[0xb7] = IDTDescriptor::new(int_0xb7 as usize, 0x08, 0x8E);
-        IDT[0xb8] = IDTDescriptor::new(int_0xb8 as usize, 0x08, 0x8E);
-        IDT[0xb9] = IDTDescriptor::new(int_0xb9 as usize, 0x08, 0x8E);
-        IDT[0xba] = IDTDescriptor::new(int_0xba as usize, 0x08, 0x8E);
-        IDT[0xbb] = IDTDescriptor::new(int_0xbb as usize, 0x08, 0x8E);
-        IDT[0xbc] = IDTDescriptor::new(int_0xbc as usize, 0x08, 0x8E);
-        IDT[0xbd] = IDTDescriptor::new(int_0xbd as usize, 0x08, 0x8E);
-        IDT[0xbe] = IDTDescriptor::new(int_0xbe as usize, 0x08, 0x8E);
-        IDT[0xbf] = IDTDescriptor::new(int_0xbf as usize, 0x08, 0x8E);
-        IDT[0xc0] = IDTDescriptor::new(int_0xc0 as usize, 0x08, 0x8E);
-        IDT[0xc1] = IDTDescriptor::new(int_0xc1 as usize, 0x08, 0x8E);
-        IDT[0xc2] = IDTDescriptor::new(int_0xc2 as usize, 0x08, 0x8E);
-        IDT[0xc3] = IDTDescriptor::new(int_0xc3 as usize, 0x08, 0x8E);
-        IDT[0xc4] = IDTDescriptor::new(int_0xc4 as usize, 0x08, 0x8E);
-        IDT[0xc5] = IDTDescriptor::new(int_0xc5 as usize, 0x08, 0x8E);
-        IDT[0xc6] = IDTDescriptor::new(int_0xc6 as usize, 0x08, 0x8E);
-        IDT[0xc7] = IDTDescriptor::new(int_0xc7 as usize, 0x08, 0x8E);
-        IDT[0xc8] = IDTDescriptor::new(int_0xc8 as usize, 0x08, 0x8E);
-        IDT[0xc9] = IDTDescriptor::new(int_0xc9 as usize, 0x08, 0x8E);
-        IDT[0xca] = IDTDescriptor::new(int_0xca as usize, 0x08, 0x8E);
-        IDT[0xcb] = IDTDescriptor::new(int_0xcb as usize, 0x08, 0x8E);
-        IDT[0xcc] = IDTDescriptor::new(int_0xcc as usize, 0x08, 0x8E);
-        IDT[0xcd] = IDTDescriptor::new(int_0xcd as usize, 0x08, 0x8E);
-        IDT[0xce] = IDTDescriptor::new(int_0xce as usize, 0x08, 0x8E);
-        IDT[0xcf] = IDTDescriptor::new(int_0xcf as usize, 0x08, 0x8E);
-        IDT[0xd0] = IDTDescriptor::new(int_0xd0 as usize, 0x08, 0x8E);
-        IDT[0xd1] = IDTDescriptor::new(int_0xd1 as usize, 0x08, 0x8E);
-        IDT[0xd2] = IDTDescriptor::new(int_0xd2 as usize, 0x08, 0x8E);
-        IDT[0xd3] = IDTDescriptor::new(int_0xd3 as usize, 0x08, 0x8E);
-        IDT[0xd4] = IDTDescriptor::new(int_0xd4 as usize, 0x08, 0x8E);
-        IDT[0xd5] = IDTDescriptor::new(int_0xd5 as usize, 0x08, 0x8E);
-        IDT[0xd6] = IDTDescriptor::new(int_0xd6 as usize, 0x08, 0x8E);
-        IDT[0xd7] = IDTDescriptor::new(int_0xd7 as usize, 0x08, 0x8E);
-        IDT[0xd8] = IDTDescriptor::new(int_0xd8 as usize, 0x08, 0x8E);
-        IDT[0xd9] = IDTDescriptor::new(int_0xd9 as usize, 0x08, 0x8E);
-        IDT[0xda] = IDTDescriptor::new(int_0xda as usize, 0x08, 0x8E);
-        IDT[0xdb] = IDTDescriptor::new(int_0xdb as usize, 0x08, 0x8E);
-        IDT[0xdc] = IDTDescriptor::new(int_0xdc as usize, 0x08, 0x8E);
-        IDT[0xdd] = IDTDescriptor::new(int_0xdd as usize, 0x08, 0x8E);
-        IDT[0xde] = IDTDescriptor::new(int_0xde as usize, 0x08, 0x8E);
-        IDT[0xdf] = IDTDescriptor::new(int_0xdf as usize, 0x08, 0x8E);
-        IDT[0xe0] = IDTDescriptor::new(int_0xe0 as usize, 0x08, 0x8E);
-        IDT[0xe1] = IDTDescriptor::new(int_0xe1 as usize, 0x08, 0x8E);
-        IDT[0xe2] = IDTDescriptor::new(int_0xe2 as usize, 0x08, 0x8E);
-        IDT[0xe3] = IDTDescriptor::new(int_0xe3 as usize, 0x08, 0x8E);
-        IDT[0xe4] = IDTDescriptor::new(int_0xe4 as usize, 0x08, 0x8E);
-        IDT[0xe5] = IDTDescriptor::new(int_0xe5 as usize, 0x08, 0x8E);
-        IDT[0xe6] = IDTDescriptor::new(int_0xe6 as usize, 0x08, 0x8E);
-        IDT[0xe7] = IDTDescriptor::new(int_0xe7 as usize, 0x08, 0x8E);
-        IDT[0xe8] = IDTDescriptor::new(int_0xe8 as usize, 0x08, 0x8E);
-        IDT[0xe9] = IDTDescriptor::new(int_0xe9 as usize, 0x08, 0x8E);
-        IDT[0xea] = IDTDescriptor::new(int_0xea as usize, 0x08, 0x8E);
-        IDT[0xeb] = IDTDescriptor::new(int_0xeb as usize, 0x08, 0x8E);
-        IDT[0xec] = IDTDescriptor::new(int_0xec as usize, 0x08, 0x8E);
-        IDT[0xed] = IDTDescriptor::new(int_0xed as usize, 0x08, 0x8E);
-        IDT[0xee] = IDTDescriptor::new(int_0xee as usize, 0x08, 0x8E);
-        IDT[0xef] = IDTDescriptor::new(int_0xef as usize, 0x08, 0x8E);
-        IDT[0xf0] = IDTDescriptor::new(int_0xf0 as usize, 0x08, 0x8E);
-        IDT[0xf1] = IDTDescriptor::new(int_0xf1 as usize, 0x08, 0x8E);
-        IDT[0xf2] = IDTDescriptor::new(int_0xf2 as usize, 0x08, 0x8E);
-        IDT[0xf3] = IDTDescriptor::new(int_0xf3 as usize, 0x08, 0x8E);
-        IDT[0xf4] = IDTDescriptor::new(int_0xf4 as usize, 0x08, 0x8E);
-        IDT[0xf5] = IDTDescriptor::new(int_0xf5 as usize, 0x08, 0x8E);
-        IDT[0xf6] = IDTDescriptor::new(int_0xf6 as usize, 0x08, 0x8E);
-        IDT[0xf7] = IDTDescriptor::new(int_0xf7 as usize, 0x08, 0x8E);
-        IDT[0xf8] = IDTDescriptor::new(int_0xf8 as usize, 0x08, 0x8E);
-        IDT[0xf9] = IDTDescriptor::new(int_0xf9 as usize, 0x08, 0x8E);
-        IDT[0xfa] = IDTDescriptor::new(int_0xfa as usize, 0x08, 0x8E);
-        IDT[0xfb] = IDTDescriptor::new(int_0xfb as usize, 0x08, 0x8E);
-        IDT[0xfc] = IDTDescriptor::new(int_0xfc as usize, 0x08, 0x8E);
-        IDT[0xfd] = IDTDescriptor::new(int_0xfd as usize, 0x08, 0x8E);
-        IDT[0xfe] = IDTDescriptor::new(int_0xfe as usize, 0x08, 0x8E);
-        IDT[0xff] = IDTDescriptor::new(int_0xff as usize, 0x08, 0x8E);
+    #[cfg(target_arch = "x86")]
+    type Address = u32;
+    #[cfg(target_arch = "x86_64")]
+    type Address = u64;
 
-        IDTR.limit = core::mem::size_of::<Idt>() as u16 - 1;
-        IDTR.base = &raw const IDT as usize;
-        core::arch::asm!("lidt ({0})", in(reg) &raw const IDTR as usize, options(att_syntax));
+    fn make_desc(offset: Address) -> Descriptor {
+        use x86::segmentation::{
+            BuildDescriptor, DescriptorBuilder, GateDescriptorBuilder, SegmentSelector,
+        };
+        DescriptorBuilder::interrupt_descriptor(SegmentSelector::new(1, x86::Ring::Ring0), offset)
+            .present()
+            .finish()
+    }
+
+    unsafe {
+        IDT[0x00] = make_desc(int_0x00 as _);
+        IDT[0x01] = make_desc(int_0x01 as _);
+        IDT[0x02] = make_desc(int_0x02 as _);
+        IDT[0x03] = make_desc(int_0x03 as _);
+        IDT[0x04] = make_desc(int_0x04 as _);
+        IDT[0x05] = make_desc(int_0x05 as _);
+        IDT[0x06] = make_desc(int_0x06 as _);
+        IDT[0x07] = make_desc(int_0x07 as _);
+        IDT[0x08] = make_desc(int_0x08 as _);
+        IDT[0x09] = make_desc(int_0x09 as _);
+        IDT[0x0a] = make_desc(int_0x0a as _);
+        IDT[0x0b] = make_desc(int_0x0b as _);
+        IDT[0x0c] = make_desc(int_0x0c as _);
+        IDT[0x0d] = make_desc(int_0x0d as _);
+        IDT[0x0e] = make_desc(int_0x0e as _);
+        IDT[0x0f] = make_desc(int_0x0f as _);
+        IDT[0x10] = make_desc(int_0x10 as _);
+        IDT[0x11] = make_desc(int_0x11 as _);
+        IDT[0x12] = make_desc(int_0x12 as _);
+        IDT[0x13] = make_desc(int_0x13 as _);
+        IDT[0x14] = make_desc(int_0x14 as _);
+        IDT[0x15] = make_desc(int_0x15 as _);
+        IDT[0x16] = make_desc(int_0x16 as _);
+        IDT[0x17] = make_desc(int_0x17 as _);
+        IDT[0x18] = make_desc(int_0x18 as _);
+        IDT[0x19] = make_desc(int_0x19 as _);
+        IDT[0x1a] = make_desc(int_0x1a as _);
+        IDT[0x1b] = make_desc(int_0x1b as _);
+        IDT[0x1c] = make_desc(int_0x1c as _);
+        IDT[0x1d] = make_desc(int_0x1d as _);
+        IDT[0x1e] = make_desc(int_0x1e as _);
+        IDT[0x1f] = make_desc(int_0x1f as _);
+        IDT[0x20] = make_desc(int_0x20 as _);
+        IDT[0x21] = make_desc(int_0x21 as _);
+        IDT[0x22] = make_desc(int_0x22 as _);
+        IDT[0x23] = make_desc(int_0x23 as _);
+        IDT[0x24] = make_desc(int_0x24 as _);
+        IDT[0x25] = make_desc(int_0x25 as _);
+        IDT[0x26] = make_desc(int_0x26 as _);
+        IDT[0x27] = make_desc(int_0x27 as _);
+        IDT[0x28] = make_desc(int_0x28 as _);
+        IDT[0x29] = make_desc(int_0x29 as _);
+        IDT[0x2a] = make_desc(int_0x2a as _);
+        IDT[0x2b] = make_desc(int_0x2b as _);
+        IDT[0x2c] = make_desc(int_0x2c as _);
+        IDT[0x2d] = make_desc(int_0x2d as _);
+        IDT[0x2e] = make_desc(int_0x2e as _);
+        IDT[0x2f] = make_desc(int_0x2f as _);
+        IDT[0x30] = make_desc(int_0x30 as _);
+        IDT[0x31] = make_desc(int_0x31 as _);
+        IDT[0x32] = make_desc(int_0x32 as _);
+        IDT[0x33] = make_desc(int_0x33 as _);
+        IDT[0x34] = make_desc(int_0x34 as _);
+        IDT[0x35] = make_desc(int_0x35 as _);
+        IDT[0x36] = make_desc(int_0x36 as _);
+        IDT[0x37] = make_desc(int_0x37 as _);
+        IDT[0x38] = make_desc(int_0x38 as _);
+        IDT[0x39] = make_desc(int_0x39 as _);
+        IDT[0x3a] = make_desc(int_0x3a as _);
+        IDT[0x3b] = make_desc(int_0x3b as _);
+        IDT[0x3c] = make_desc(int_0x3c as _);
+        IDT[0x3d] = make_desc(int_0x3d as _);
+        IDT[0x3e] = make_desc(int_0x3e as _);
+        IDT[0x3f] = make_desc(int_0x3f as _);
+        IDT[0x40] = make_desc(int_0x40 as _);
+        IDT[0x41] = make_desc(int_0x41 as _);
+        IDT[0x42] = make_desc(int_0x42 as _);
+        IDT[0x43] = make_desc(int_0x43 as _);
+        IDT[0x44] = make_desc(int_0x44 as _);
+        IDT[0x45] = make_desc(int_0x45 as _);
+        IDT[0x46] = make_desc(int_0x46 as _);
+        IDT[0x47] = make_desc(int_0x47 as _);
+        IDT[0x48] = make_desc(int_0x48 as _);
+        IDT[0x49] = make_desc(int_0x49 as _);
+        IDT[0x4a] = make_desc(int_0x4a as _);
+        IDT[0x4b] = make_desc(int_0x4b as _);
+        IDT[0x4c] = make_desc(int_0x4c as _);
+        IDT[0x4d] = make_desc(int_0x4d as _);
+        IDT[0x4e] = make_desc(int_0x4e as _);
+        IDT[0x4f] = make_desc(int_0x4f as _);
+        IDT[0x50] = make_desc(int_0x50 as _);
+        IDT[0x51] = make_desc(int_0x51 as _);
+        IDT[0x52] = make_desc(int_0x52 as _);
+        IDT[0x53] = make_desc(int_0x53 as _);
+        IDT[0x54] = make_desc(int_0x54 as _);
+        IDT[0x55] = make_desc(int_0x55 as _);
+        IDT[0x56] = make_desc(int_0x56 as _);
+        IDT[0x57] = make_desc(int_0x57 as _);
+        IDT[0x58] = make_desc(int_0x58 as _);
+        IDT[0x59] = make_desc(int_0x59 as _);
+        IDT[0x5a] = make_desc(int_0x5a as _);
+        IDT[0x5b] = make_desc(int_0x5b as _);
+        IDT[0x5c] = make_desc(int_0x5c as _);
+        IDT[0x5d] = make_desc(int_0x5d as _);
+        IDT[0x5e] = make_desc(int_0x5e as _);
+        IDT[0x5f] = make_desc(int_0x5f as _);
+        IDT[0x60] = make_desc(int_0x60 as _);
+        IDT[0x61] = make_desc(int_0x61 as _);
+        IDT[0x62] = make_desc(int_0x62 as _);
+        IDT[0x63] = make_desc(int_0x63 as _);
+        IDT[0x64] = make_desc(int_0x64 as _);
+        IDT[0x65] = make_desc(int_0x65 as _);
+        IDT[0x66] = make_desc(int_0x66 as _);
+        IDT[0x67] = make_desc(int_0x67 as _);
+        IDT[0x68] = make_desc(int_0x68 as _);
+        IDT[0x69] = make_desc(int_0x69 as _);
+        IDT[0x6a] = make_desc(int_0x6a as _);
+        IDT[0x6b] = make_desc(int_0x6b as _);
+        IDT[0x6c] = make_desc(int_0x6c as _);
+        IDT[0x6d] = make_desc(int_0x6d as _);
+        IDT[0x6e] = make_desc(int_0x6e as _);
+        IDT[0x6f] = make_desc(int_0x6f as _);
+        IDT[0x70] = make_desc(int_0x70 as _);
+        IDT[0x71] = make_desc(int_0x71 as _);
+        IDT[0x72] = make_desc(int_0x72 as _);
+        IDT[0x73] = make_desc(int_0x73 as _);
+        IDT[0x74] = make_desc(int_0x74 as _);
+        IDT[0x75] = make_desc(int_0x75 as _);
+        IDT[0x76] = make_desc(int_0x76 as _);
+        IDT[0x77] = make_desc(int_0x77 as _);
+        IDT[0x78] = make_desc(int_0x78 as _);
+        IDT[0x79] = make_desc(int_0x79 as _);
+        IDT[0x7a] = make_desc(int_0x7a as _);
+        IDT[0x7b] = make_desc(int_0x7b as _);
+        IDT[0x7c] = make_desc(int_0x7c as _);
+        IDT[0x7d] = make_desc(int_0x7d as _);
+        IDT[0x7e] = make_desc(int_0x7e as _);
+        IDT[0x7f] = make_desc(int_0x7f as _);
+        IDT[0x80] = make_desc(int_0x80 as _);
+        IDT[0x81] = make_desc(int_0x81 as _);
+        IDT[0x82] = make_desc(int_0x82 as _);
+        IDT[0x83] = make_desc(int_0x83 as _);
+        IDT[0x84] = make_desc(int_0x84 as _);
+        IDT[0x85] = make_desc(int_0x85 as _);
+        IDT[0x86] = make_desc(int_0x86 as _);
+        IDT[0x87] = make_desc(int_0x87 as _);
+        IDT[0x88] = make_desc(int_0x88 as _);
+        IDT[0x89] = make_desc(int_0x89 as _);
+        IDT[0x8a] = make_desc(int_0x8a as _);
+        IDT[0x8b] = make_desc(int_0x8b as _);
+        IDT[0x8c] = make_desc(int_0x8c as _);
+        IDT[0x8d] = make_desc(int_0x8d as _);
+        IDT[0x8e] = make_desc(int_0x8e as _);
+        IDT[0x8f] = make_desc(int_0x8f as _);
+        IDT[0x90] = make_desc(int_0x90 as _);
+        IDT[0x91] = make_desc(int_0x91 as _);
+        IDT[0x92] = make_desc(int_0x92 as _);
+        IDT[0x93] = make_desc(int_0x93 as _);
+        IDT[0x94] = make_desc(int_0x94 as _);
+        IDT[0x95] = make_desc(int_0x95 as _);
+        IDT[0x96] = make_desc(int_0x96 as _);
+        IDT[0x97] = make_desc(int_0x97 as _);
+        IDT[0x98] = make_desc(int_0x98 as _);
+        IDT[0x99] = make_desc(int_0x99 as _);
+        IDT[0x9a] = make_desc(int_0x9a as _);
+        IDT[0x9b] = make_desc(int_0x9b as _);
+        IDT[0x9c] = make_desc(int_0x9c as _);
+        IDT[0x9d] = make_desc(int_0x9d as _);
+        IDT[0x9e] = make_desc(int_0x9e as _);
+        IDT[0x9f] = make_desc(int_0x9f as _);
+        IDT[0xa0] = make_desc(int_0xa0 as _);
+        IDT[0xa1] = make_desc(int_0xa1 as _);
+        IDT[0xa2] = make_desc(int_0xa2 as _);
+        IDT[0xa3] = make_desc(int_0xa3 as _);
+        IDT[0xa4] = make_desc(int_0xa4 as _);
+        IDT[0xa5] = make_desc(int_0xa5 as _);
+        IDT[0xa6] = make_desc(int_0xa6 as _);
+        IDT[0xa7] = make_desc(int_0xa7 as _);
+        IDT[0xa8] = make_desc(int_0xa8 as _);
+        IDT[0xa9] = make_desc(int_0xa9 as _);
+        IDT[0xaa] = make_desc(int_0xaa as _);
+        IDT[0xab] = make_desc(int_0xab as _);
+        IDT[0xac] = make_desc(int_0xac as _);
+        IDT[0xad] = make_desc(int_0xad as _);
+        IDT[0xae] = make_desc(int_0xae as _);
+        IDT[0xaf] = make_desc(int_0xaf as _);
+        IDT[0xb0] = make_desc(int_0xb0 as _);
+        IDT[0xb1] = make_desc(int_0xb1 as _);
+        IDT[0xb2] = make_desc(int_0xb2 as _);
+        IDT[0xb3] = make_desc(int_0xb3 as _);
+        IDT[0xb4] = make_desc(int_0xb4 as _);
+        IDT[0xb5] = make_desc(int_0xb5 as _);
+        IDT[0xb6] = make_desc(int_0xb6 as _);
+        IDT[0xb7] = make_desc(int_0xb7 as _);
+        IDT[0xb8] = make_desc(int_0xb8 as _);
+        IDT[0xb9] = make_desc(int_0xb9 as _);
+        IDT[0xba] = make_desc(int_0xba as _);
+        IDT[0xbb] = make_desc(int_0xbb as _);
+        IDT[0xbc] = make_desc(int_0xbc as _);
+        IDT[0xbd] = make_desc(int_0xbd as _);
+        IDT[0xbe] = make_desc(int_0xbe as _);
+        IDT[0xbf] = make_desc(int_0xbf as _);
+        IDT[0xc0] = make_desc(int_0xc0 as _);
+        IDT[0xc1] = make_desc(int_0xc1 as _);
+        IDT[0xc2] = make_desc(int_0xc2 as _);
+        IDT[0xc3] = make_desc(int_0xc3 as _);
+        IDT[0xc4] = make_desc(int_0xc4 as _);
+        IDT[0xc5] = make_desc(int_0xc5 as _);
+        IDT[0xc6] = make_desc(int_0xc6 as _);
+        IDT[0xc7] = make_desc(int_0xc7 as _);
+        IDT[0xc8] = make_desc(int_0xc8 as _);
+        IDT[0xc9] = make_desc(int_0xc9 as _);
+        IDT[0xca] = make_desc(int_0xca as _);
+        IDT[0xcb] = make_desc(int_0xcb as _);
+        IDT[0xcc] = make_desc(int_0xcc as _);
+        IDT[0xcd] = make_desc(int_0xcd as _);
+        IDT[0xce] = make_desc(int_0xce as _);
+        IDT[0xcf] = make_desc(int_0xcf as _);
+        IDT[0xd0] = make_desc(int_0xd0 as _);
+        IDT[0xd1] = make_desc(int_0xd1 as _);
+        IDT[0xd2] = make_desc(int_0xd2 as _);
+        IDT[0xd3] = make_desc(int_0xd3 as _);
+        IDT[0xd4] = make_desc(int_0xd4 as _);
+        IDT[0xd5] = make_desc(int_0xd5 as _);
+        IDT[0xd6] = make_desc(int_0xd6 as _);
+        IDT[0xd7] = make_desc(int_0xd7 as _);
+        IDT[0xd8] = make_desc(int_0xd8 as _);
+        IDT[0xd9] = make_desc(int_0xd9 as _);
+        IDT[0xda] = make_desc(int_0xda as _);
+        IDT[0xdb] = make_desc(int_0xdb as _);
+        IDT[0xdc] = make_desc(int_0xdc as _);
+        IDT[0xdd] = make_desc(int_0xdd as _);
+        IDT[0xde] = make_desc(int_0xde as _);
+        IDT[0xdf] = make_desc(int_0xdf as _);
+        IDT[0xe0] = make_desc(int_0xe0 as _);
+        IDT[0xe1] = make_desc(int_0xe1 as _);
+        IDT[0xe2] = make_desc(int_0xe2 as _);
+        IDT[0xe3] = make_desc(int_0xe3 as _);
+        IDT[0xe4] = make_desc(int_0xe4 as _);
+        IDT[0xe5] = make_desc(int_0xe5 as _);
+        IDT[0xe6] = make_desc(int_0xe6 as _);
+        IDT[0xe7] = make_desc(int_0xe7 as _);
+        IDT[0xe8] = make_desc(int_0xe8 as _);
+        IDT[0xe9] = make_desc(int_0xe9 as _);
+        IDT[0xea] = make_desc(int_0xea as _);
+        IDT[0xeb] = make_desc(int_0xeb as _);
+        IDT[0xec] = make_desc(int_0xec as _);
+        IDT[0xed] = make_desc(int_0xed as _);
+        IDT[0xee] = make_desc(int_0xee as _);
+        IDT[0xef] = make_desc(int_0xef as _);
+        IDT[0xf0] = make_desc(int_0xf0 as _);
+        IDT[0xf1] = make_desc(int_0xf1 as _);
+        IDT[0xf2] = make_desc(int_0xf2 as _);
+        IDT[0xf3] = make_desc(int_0xf3 as _);
+        IDT[0xf4] = make_desc(int_0xf4 as _);
+        IDT[0xf5] = make_desc(int_0xf5 as _);
+        IDT[0xf6] = make_desc(int_0xf6 as _);
+        IDT[0xf7] = make_desc(int_0xf7 as _);
+        IDT[0xf8] = make_desc(int_0xf8 as _);
+        IDT[0xf9] = make_desc(int_0xf9 as _);
+        IDT[0xfa] = make_desc(int_0xfa as _);
+        IDT[0xfb] = make_desc(int_0xfb as _);
+        IDT[0xfc] = make_desc(int_0xfc as _);
+        IDT[0xfd] = make_desc(int_0xfd as _);
+        IDT[0xfe] = make_desc(int_0xfe as _);
+        IDT[0xff] = make_desc(int_0xff as _);
+
+        #[allow(static_mut_refs)]
+        let idtr = IDTR.insert(x86::dtables::DescriptorTablePointer::new_from_slice(&IDT));
+        x86::dtables::lidt(&idtr);
 
         // Programming PIC
-        u8::write(0x20, 0x11); // Remap master PIC
-        u8::write(0xa0, 0x11); // Remap slave PIC
-        u8::write(0x21, 0x20); // Master PIC offset 0x20
-        u8::write(0xa1, 0x28); // Slave PIC offset 0x28
-        u8::write(0x21, 4); // Tell master PIC that there is a slave PIC at IRQ2 (0000 0100)
-        u8::write(0xa1, 2); // Tell slave PIC its cascade identity (0000 0010)
-        u8::write(0x21, 0x01); // 8086 mode
-        u8::write(0xa1, 0x01); // 8086 mode
-        u8::write(0x21, 0x00); // Master PIC mask
-        u8::write(0xa1, 0x00); // Slave PIC mask
-        enable();
+        x86::io::outb(0x20, 0x11); // Remap master PIC
+        x86::io::outb(0xa0, 0x11); // Remap slave PIC
+        x86::io::outb(0x21, 0x20); // Master PIC offset 0x20
+        x86::io::outb(0xa1, 0x28); // Slave PIC offset 0x28
+        x86::io::outb(0x21, 4); // Tell master PIC that there is a slave PIC at IRQ2 (0000 0100)
+        x86::io::outb(0xa1, 2); // Tell slave PIC its cascade identity (0000 0010)
+        x86::io::outb(0x21, 0x01); // 8086 mode
+        x86::io::outb(0xa1, 0x01); // 8086 mode
+        x86::io::outb(0x21, 0x00); // Master PIC mask
+        x86::io::outb(0xa1, 0x00); // Slave PIC mask
+        x86::irq::enable();
     }
     crate::println!("IDT is setup");
 }
