@@ -1,12 +1,15 @@
+mod state;
+use state::*;
+
 /// Central interrupt handler, all interrupts come here specifying an interrupt number
-extern "C" fn interrupt_handler(interrupt: u8, error_code: usize) {
+extern "fastcall" fn interrupt_handler(interrupt: usize, frame: &mut InterruptStackFrame) {
     if interrupt == 0x20 {
         // Timer
         return;
     }
     if interrupt == 0x0E {
         // Page fault
-        crate::println!("Page fault!\nError code:\n{:#032b}", error_code);
+        crate::println!("Page fault!\nError code:\n{:#032b}", frame.error_code);
         crate::println!("                ^        ^^IRUWP");
         crate::println!("               SGX      SSPK    ");
         panic!("Halt");
@@ -19,19 +22,19 @@ extern "C" fn interrupt_handler(interrupt: u8, error_code: usize) {
     }
     if interrupt == 0x80 {
         // Syscall
-        crate::println!("TEST: {}", 0);
+        crate::println!("Test syscall\n{:#?}", frame);
         return;
     }
     if interrupt < 0x20 {
         panic!(
             "{}\nError code: {:#x}",
             x86::irq::EXCEPTIONS[interrupt as usize].description,
-            error_code
+            frame.error_code
         );
     }
     panic!(
         "Unknown interrupt: {:#x}\nError code: {:#x}",
-        interrupt, error_code
+        interrupt, frame.error_code
     );
 }
 
@@ -52,31 +55,21 @@ macro_rules! int {
         )*
     };
     ($name: ident($no: literal)) => {
-        extern "x86-interrupt" fn $name () {
-            interrupt_handler($no, 0);
-        }
+        wrap_interrupt!($name, $no, wrap_interrupt!(no error code), "");
     };
     ($name: ident($no: literal, ec)) => {
-        extern "x86-interrupt" fn $name (error_code: usize) {
-            interrupt_handler($no, error_code);
-        }
+        wrap_interrupt!($name, $no, wrap_interrupt!(error code), "");
     };
     ($name: ident($no: literal, m)) => {
-        extern "x86-interrupt" fn $name () {
-            unsafe {
-                interrupt_handler($no, 0);
-                x86::io::outb(0x20, 0x20);
-            }
-        }
+        wrap_interrupt!($name, $no, wrap_interrupt!(no error code), concat!(
+            "out $0x20, $0x20\n"
+        ));
     };
     ($name: ident($no: literal, s)) => {
-        extern "x86-interrupt" fn $name () {
-            unsafe {
-                interrupt_handler($no, 0);
-                x86::io::outb(0x20, 0x20);
-                x86::io::outb(0xa0, 0x20);
-            }
-        }
+        wrap_interrupt!($name, $no, wrap_interrupt!(no error code), concat!(
+            "out $0x20, $0x20\n",
+            "out $0xa0, $0x20\n",
+        ));
     };
 }
 

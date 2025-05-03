@@ -40,6 +40,10 @@ build() {
 		cp -r "$GRUB_CFG" bin/iso/boot
 		cp "$KERNEL" bin/iso/boot/kernel.bin
 		grub-mkrescue -o bin/os.iso bin/iso
+
+		# Generate debug symbols for BOCHS
+		nm -C $KERNEL | grep " T " | awk '{ print $1" "$3 }' > $KERNEL.sym
+
 		echo "${green}Done!${normal}"
 	fi
 }

@@ -16,3 +16,8 @@ Here are some things you could help with:
 Would be nice if anyone could help rewrite it in a rusty way! It's not even using the x86 crate
 - Find a way to make freeing in ZonedBuddy page allocator checked (you can free a random page rigth now and it won't even panic)
 - Find a way to also check freeing in NestedPageTable
+Of course, you can always run
+```bash
+rg "// (TODO|FIXME)"
+```
+and see whats out there!

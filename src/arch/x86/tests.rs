@@ -1,8 +1,15 @@
 use crate::arch::traits::*;
 
 pub(super) fn run() -> ! {
+    test_syscalls();
     test_paging();
     panic!("Testing finished");
+}
+
+fn test_syscalls() {
+    unsafe {
+        core::arch::asm!("mov $42, %eax\nint $0x80\n", options(att_syntax));
+    }
 }
 
 fn test_paging() {
